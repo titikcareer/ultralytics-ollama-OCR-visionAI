@@ -1,10 +1,10 @@
 <div align="center">
-  <a href="http://neuralnet.solutions" target="_blank">
-    <img width="450" src="https://raw.githubusercontent.com/NeuralNet-Hub/assets/main/logo/LOGO_png_orig.png">
+  <a href="#" target="_blank">
+    <img width="450" src="https://raw.githubusercontent.com/titikcareer/assets/main/logo/LOGO_png_orig.png">
   </a>
 </div>
 
-# ALPR YOLO Models by [NeuralNet](https://neuralnet.solutions) 🚗
+# ALPR YOLO Models Rebuild by [ghxfarr] 🚗
 
 This repository provides **open-source Automatic License Plate Recognition (ALPR) models** built on the YOLO11 architecture. Our models are designed for high-performance license plate detection and recognition across various real-world scenarios.
 
@@ -28,14 +28,14 @@ The complete solution includes:
 
 1. **Clone the inference repository:**
 ```bash
-git clone https://github.com/NeuralNet-Hub/ultralytics-ollama-OCR.git
-cd ultralytics-ollama-OCR
+git clone https://github.com/NeuralNet-Hub/ultralytics-ollama-OCR-rebuild.git
+cd ultralytics-ollama-OCR-rebuild
 ```
 
 2. **Download the model weights:**
 ```bash
 # Download from our latest release
-wget https://github.com/NeuralNet-Hub/assets/releases/download/v0.0.1/alpr-yolo11s-aug.pt
+wget https://github.com/titikcareer/assets/releases/download/v0.0.1/alpr-yolo11s-aug.pt
 ```
 
 3. **Install dependencies:**
@@ -154,4 +154,4 @@ We develop cutting-edge AI tools that prioritize:
 
 ---
 
-_Developed by_ **_[Henry Navarro](https://github.com/hdnh2006)_** _- Building the future of computer vision, one model at a time._
+_Developed by_ **_[ghxfarr](https://github.com/titikcareer)_** _- Building the future of computer vision, one model at a time._
