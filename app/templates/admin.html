@@ -16,6 +16,10 @@
   'scan_deleted': 'Menghapus hasil bacaan',
   'feedback_saved': 'Menyimpan feedback pelatihan',
   'feedback_failed': 'Gagal menyimpan feedback pelatihan',
+  'feedback_verified': 'Memverifikasi feedback pelatihan',
+  'user_password_reset': 'Mengatur ulang kata sandi karyawan',
+  'model_rollback': 'Mengembalikan model sebelumnya',
+  'model_rollback_failed': 'Gagal mengembalikan model',
   'retrain_requested': 'Memulai latih ulang model',
   'retrain_failed': 'Gagal melatih ulang model',
   'export_created': 'Membuat laporan Excel',
@@ -41,17 +45,41 @@
 </section>
 
 <section class="card">
-  <h2>Model OCR &amp; Pembelajaran Berkelanjutan</h2>
+  <h2>Model OCR &amp; Self Learning Model</h2>
   <p class="muted">
     Model aktif: <strong>{{ model_info.version or 'Belum tersedia' }}</strong>
     {% if model_info.get('map50') is not none %} | mAP50: <strong>{{ '%.3f'|format(model_info.get('map50')) }}</strong>{% endif %}
   </p>
-  <p class="muted">Feedback terverifikasi: <strong>{{ feedback_count }}</strong> struk. Latih ulang otomatis setiap {{ feedback_threshold }} feedback baru.</p>
+  <p class="muted">Feedback terverifikasi: <strong>{{ feedback_count }}</strong> struk. Ambang minimal: {{ feedback_threshold }} feedback. Latih ulang dijalankan manual oleh administrator.</p>
   <div class="actions">
     <button type="button" class="secondary" id="retrainBtn">Latih Ulang Model Sekarang</button>
+    <button type="button" class="secondary" id="rollbackBtn">Kembalikan Model Sebelumnya</button>
   </div>
   <p class="notice" id="retrainStatus" role="status" hidden></p>
   <p class="notice notice-error" id="retrainError" role="alert" hidden></p>
+</section>
+
+<section class="card">
+  <h2>Feedback menunggu verifikasi</h2>
+  <div class="table-wrap table-scroll">
+    <table>
+      <thead><tr><th>ID</th><th>Struk</th><th>Karyawan</th><th>Dibuat</th><th></th></tr></thead>
+      <tbody>
+        {% for item in pending_feedback %}
+        <tr>
+          <td>{{ item.id }}</td>
+          <td>{{ item.scan_id or '-' }}</td>
+          <td>{{ item.employee or '-' }}</td>
+          <td>{{ item.created_at or '-' }}</td>
+          <td><button type="button" class="text-button verify-feedback" data-feedback-id="{{ item.id }}">Verifikasi</button></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="empty">Tidak ada feedback yang menunggu verifikasi.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="notice" id="feedbackStatus" role="status" hidden></p>
 </section>
 
 <section class="card">
@@ -67,10 +95,11 @@
           <td>{{ role_labels.get(item.role, item.role) }}</td>
           <td>{{ 'Aktif' if item.is_active else 'Nonaktif' }}</td>
           <td>
-            <form method="post" action="/admin/users/{{ item.id }}/status" class="inline-form">
-              <input type="hidden" name="csrf" value="{{ csrf }}">
-              <button type="submit" class="text-button">{{ 'Nonaktifkan' if item.is_active else 'Aktifkan' }}</button>
-            </form>
+              <form method="post" action="/admin/users/{{ item.id }}/status" class="inline-form">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <button type="submit" class="text-button">{{ 'Nonaktifkan' if item.is_active else 'Aktifkan' }}</button>
+              </form>
+              <button type="button" class="text-button reset-password" data-user-id="{{ item.id }}" data-username="{{ item.username }}">Reset Password</button>
           </td>
         </tr>
         {% endfor %}

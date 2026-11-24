@@ -20,7 +20,7 @@ from contextlib import contextmanager  # noqa: E402
 from datetime import UTC, datetime  # noqa: E402
 
 from ocr_ml.data.feedback_sync import sync_feedback_to_dataset, verified_count  # noqa: E402
-from ocr_ml.models.evaluate_model import should_promote  # noqa: E402
+from ocr_ml.models.evaluate_model import evaluate, should_promote  # noqa: E402
 from ocr_ml.models.predict_model import model_candidates, reload_detector  # noqa: E402
 from ocr_ml.models.train_model import (  # noqa: E402
     DEFAULT_WEIGHTS,
@@ -60,9 +60,7 @@ def _retrain_lock(root: Path):
 def _append_log(root: Path, result: dict) -> None:
     log_path = root / "models" / "retrain.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    line = json.dumps(
-        {"logged_at": datetime.now(UTC).isoformat(), **result}, ensure_ascii=False, sort_keys=True
-    )
+    line = json.dumps({"logged_at": datetime.now(UTC).isoformat(), **result}, ensure_ascii=False, sort_keys=True)
     with log_path.open("a", encoding="utf-8") as handle:
         handle.write(line + "\n")
 
@@ -95,7 +93,11 @@ def retrain(
 
     with _retrain_lock(ml_root) as acquired:
         if not acquired:
-            return {"status": "already_running", "verified_feedback": pending}
+            return {
+                "status": "already_running",
+                "reason": "Proses latih ulang lain sedang berjalan; coba lagi beberapa menit.",
+                "verified_feedback": pending,
+            }
 
         sync = sync_feedback_to_dataset(ml_root)
         production_weights = model_candidates(ml_root)
@@ -112,14 +114,31 @@ def retrain(
             record=False,
         )
         candidate_map = float(candidate["metrics"]["map50"])
+        evaluation_error = None
+        try:
+            baseline = evaluate(
+                production_weights or DEFAULT_WEIGHTS,
+                candidate["data"],
+                imgsz=imgsz,
+                device=device,
+                root=ml_root,
+            )
+            current_map = float(baseline["map50"])
+        except Exception as exc:
+            evaluation_error = type(exc).__name__
         promoted = should_promote(candidate_map, current_map)
+
+        version_dir = ml_root / "models" / "versions" / candidate["version"]
+        version_dir.mkdir(parents=True, exist_ok=True)
+        immutable_weights = version_dir / "best.pt"
+        shutil.copy2(candidate["weights"], immutable_weights)
 
         if promoted:
             target_dir = ml_root / "models" / "production"
             target_dir.mkdir(parents=True, exist_ok=True)
             target = target_dir / "best.pt"
             temporary = target_dir / "best.pt.tmp"
-            shutil.copy2(candidate["weights"], temporary)
+            shutil.copy2(immutable_weights, temporary)
             temporary.replace(target)
 
         extra = {
@@ -127,11 +146,12 @@ def retrain(
             "synced_samples": sync["synced"],
             "previous_map50": current_map,
             "candidate_map50": candidate_map,
+            "evaluation_error": evaluation_error,
         }
         entry = record_model(
             root=ml_root,
             version=candidate["version"],
-            weights=(ml_root / "models" / "production" / "best.pt") if promoted else Path(candidate["weights"]),
+            weights=immutable_weights,
             metrics=candidate["metrics"],
             source="retrain",
             base_weights=base_weights,
@@ -151,10 +171,62 @@ def retrain(
             "promoted": promoted,
             "verified_feedback": pending,
             "synced_samples": sync["synced"],
+            "evaluation_error": evaluation_error,
             "registry": entry,
         }
         _append_log(ml_root, result)
         return result
+
+
+def rollback(root: Path = ML_ROOT) -> dict:
+    ml_root = Path(root).resolve()
+    registry = load_registry(ml_root)
+    production = registry.get("production") or {}
+    history = list(registry.get("history") or [])
+    previous = next(
+        (
+            entry
+            for entry in reversed(history)
+            if entry.get("promoted") and entry.get("version") != production.get("version")
+        ),
+        None,
+    )
+    if previous is None:
+        result = {"status": "skipped", "reason": "Tidak ada versi produksi sebelumnya."}
+        _append_log(ml_root, result)
+        return result
+
+    source = ml_root / str(previous["path"])
+    if not source.is_file():
+        raise FileNotFoundError(f"Bobot model sebelumnya tidak ditemukan: {source}")
+
+    target_dir = ml_root / "models" / "production"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    temporary = target_dir / "best.pt.tmp"
+    shutil.copy2(source, temporary)
+    temporary.replace(target_dir / "best.pt")
+
+    metrics = {
+        "map50": float(previous.get("map50", 0.0) or 0.0),
+        "map50_95": float(previous.get("map50_95", 0.0) or 0.0),
+        "precision": float(previous.get("precision", 0.0) or 0.0),
+        "recall": float(previous.get("recall", 0.0) or 0.0),
+    }
+    entry = record_model(
+        root=ml_root,
+        version=f"rollback-{datetime.now(UTC):%Y%m%d%H%M%S}",
+        weights=source,
+        metrics=metrics,
+        source="rollback",
+        base_weights=str(source),
+        epochs=0,
+        data=Path(previous.get("data", "")),
+        promote=True,
+        extra={"rollback_from": production.get("version"), "rollback_to": previous.get("version")},
+    )
+    result = {"status": "rolled_back", "version": entry["version"], "registry": entry}
+    _append_log(ml_root, result)
+    return result
 
 
 def main() -> None:

@@ -33,7 +33,14 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title=settings.app_name, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(
+    title=settings.app_name,
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+    telemetry={"auto_configure": False},
+)
 app.mount("/static", StaticFiles(directory=settings.base_dir / "app" / "static"), name="static")
 
 
@@ -47,9 +54,16 @@ async def brand_watermark() -> FileResponse:
     return FileResponse(settings.base_dir / "templates" / "gs-battery-logo-2 1.png", media_type="image/png")
 
 
+@app.get("/healthz", include_in_schema=False)
+async def healthz() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @app.get("/api/status")
 def system_status(_: AuthContext = Depends(required_context)) -> dict[str, bool]:
     return {"ocr_ready": ocr_is_ready()}
+
+
 app.include_router(auth.router)
 app.include_router(scans.router)
 app.include_router(admin.router)
@@ -73,8 +87,11 @@ async def security_headers(request: Request, call_next):
         "connect-src 'self'; form-action 'self'; frame-ancestors 'none'; "
         "object-src 'none'; base-uri 'self'"
     )
-    if settings.is_production and request.url.scheme == "https":
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    if settings.is_production and (forwarded == "https" or request.url.scheme == "https"):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 

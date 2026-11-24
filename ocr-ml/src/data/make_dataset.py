@@ -235,9 +235,7 @@ def build_dataset(root: Path = ML_ROOT, splits: tuple[str, ...] = SPLITS) -> dic
                     continue
                 x_center, y_center, width, height = box
                 class_id = class_ids[record["class_name"]]
-                lines.append(
-                    f"{class_id} {x_center:.6f} {y_center:.6f} {width:.6f} {height:.6f}"
-                )
+                lines.append(f"{class_id} {x_center:.6f} {y_center:.6f} {width:.6f} {height:.6f}")
                 xmin, ymin, xmax, ymax = record["box"]
                 converted_rows.append(
                     [
@@ -273,9 +271,7 @@ def build_dataset(root: Path = ML_ROOT, splits: tuple[str, ...] = SPLITS) -> dic
             written += 1
             annotations += len(lines)
 
-        with (interim / f"{split}_annotations_yolo.csv").open(
-            "w", encoding="utf-8", newline=""
-        ) as handle:
+        with (interim / f"{split}_annotations_yolo.csv").open("w", encoding="utf-8", newline="") as handle:
             writer = csv.writer(handle)
             writer.writerow(YOLO_HEADER)
             writer.writerows(converted_rows)

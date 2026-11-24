@@ -276,19 +276,44 @@ def _ocr_text(
     min_confidence: float = 0.0,
     use_variants: bool = True,
 ) -> str:
-    return _ocr_reading(
-        reader, engine, crop, min_confidence=min_confidence, use_variants=use_variants
-    )[0]
+    return _ocr_reading(reader, engine, crop, min_confidence=min_confidence, use_variants=use_variants)[0]
 
 
+_OCR_DIGIT_CHARS = r"0-9OoQDIl|iSsBbZz"
+_DIGIT_TRANSLATION = str.maketrans(
+    {
+        "O": "0",
+        "o": "0",
+        "Q": "0",
+        "D": "0",
+        "l": "1",
+        "I": "1",
+        "|": "1",
+        "i": "1",
+        "S": "5",
+        "s": "5",
+        "B": "8",
+        "b": "8",
+        "Z": "2",
+        "z": "2",
+    }
+)
+_LABEL_TRANSLATION = str.maketrans({"0": "o", "1": "l", "5": "s", "8": "b", "|": "l"})
 MONEY_RE = re.compile(
-    r"(?<![\d.,])(?:rp\.?\s*)?(?:\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+)(?![\d.,])",
+    rf"(?<![\d.,])(?:rp\.?\s*)?(?:[{_OCR_DIGIT_CHARS}]{{1,3}}(?:[.,][{_OCR_DIGIT_CHARS}]{{3}})+"
+    rf"(?:[.,][{_OCR_DIGIT_CHARS}]{{1,2}})?|[{_OCR_DIGIT_CHARS}]+)(?![\d.,])",
     re.IGNORECASE,
 )
-DATE_RE = re.compile(r"\b(\d{1,4})[/\-.](\d{1,2})[/\-.](\d{2,4})\b")
-DATE_TEXT_RE = re.compile(r"\b(\d{1,2})[\s/.\-]+([A-Za-z]{3,9})[\s/.\-]+(\d{2,4})\b")
+DATE_RE = re.compile(
+    rf"\b([{_OCR_DIGIT_CHARS}]{{1,4}})[/\-.]"
+    rf"([{_OCR_DIGIT_CHARS}]{{1,2}})[/\-.]([{_OCR_DIGIT_CHARS}]{{2,4}})\b"
+)
+DATE_TEXT_RE = re.compile(
+    rf"\b([{_OCR_DIGIT_CHARS}]{{1,2}})[ .\-/]+([A-Za-z0-9]{{3,9}})[ .\-/]+([{_OCR_DIGIT_CHARS}]{{2,4}})\b"
+)
 DATE_TEXT_REVERSED_RE = re.compile(
-    r"\b([A-Za-z]{3,9})[\s/.\-]+(\d{1,2})(?:st|nd|rd|th)?[\s,.\-]+(\d{2,4})\b"
+    rf"\b([A-Za-z0-9]{{3,9}})[ .\-/]+([{_OCR_DIGIT_CHARS}]{{1,2}})(?:st|nd|rd|th)?"
+    rf"[ ,.\-]+([{_OCR_DIGIT_CHARS}]{{2,4}})\b"
 )
 RECEIPT_NO_RE = re.compile(
     r"\b(?:no\.?|nomor|nos?)(?=\s|$)\s*(?:struk|nota|invoice|kwitansi|transaksi|faktur)?\s*"
@@ -313,17 +338,28 @@ MONTH_ALIASES = {
     "des": 12,
     "dec": 12,
 }
-_LABEL_TRANSLATION = str.maketrans({"0": "o", "1": "l", "5": "s", "8": "b", "|": "l"})
 SUBTOTAL_LABEL_RE = re.compile(r"\b(?:sub[\s\-]?total|subtot)\b", re.IGNORECASE)
 TAX_LABEL_RE = re.compile(r"\b(?:pajak|ppn|tax|vat)\b", re.IGNORECASE)
 TOTAL_LABEL_RE = re.compile(
-    r"\b(?:grand[\s\-]?total|total[\s\-]?(?:bayar|pembayaran|belanja|pembelian)"
-    r"|jumlah[\s\-]?(?:bayar|total)|to+ta[l1]|totai|tagihan|total)\b",
+    r"\b(?:grand[\s\-]?total|total[\s\-]?(?:bayar|pembayaran|belanja|pembelian|akhir|tagihan)"
+    r"|jumlah[\s\-]?(?:bayar|total|pembayaran)|to+ta[l1]|totai|tagihan|amount due|total)\b",
     re.IGNORECASE,
 )
+TOTAL_PRIORITY_RE = re.compile(r"grand|bayar|belanja|pembelian|pembayaran|akhir|tagihan|amount|due", re.IGNORECASE)
+NON_TOTAL_LABEL_RE = re.compile(
+    r"sub[\s\-]?total|subtot|pajak|ppn|tax|vat|tunai|cash|kembalian|change|diskon|discount|no\.?\s*struk",
+    re.IGNORECASE,
+)
+PAYMENT_LABEL_RE = re.compile(r"\b(?:qris|tunai|cash|debit|kredit|transfer|ovo|dana|gopay|shopeepay)\b", re.IGNORECASE)
 PHONE_RE = re.compile(r"\b0\d{8,}\b")
+NPWP_RE = re.compile(r"\b\d{2}[.\-]\d{2,4}[.\-]\d{2,4}[.\-]\d{1,4}(?:[.\-]\d{1,4})+\b")
+MERCHANT_STOP_RE = re.compile(
+    r"\b(?:jl\.?|jalan|alamat|no\.?|nomor|telp|telepon|hp|fax|npwp|n\s*p\s*w\s*p)\b|@",
+    re.IGNORECASE,
+)
 IGNORED_MERCHANT_RE = re.compile(
-    r"^(?:no\.?|nomor|tanggal|tgl|date|terima kasih|thank you|struk|nota|invoice|kwitansi)\b",
+    r"^(?:info[\s\-]?toko|nama[\s\-]?toko|no\.?|nomor|tanggal|tgl|date|"
+    r"terima kasih|thank you|struk|nota|invoice|kwitansi)\b",
     re.IGNORECASE,
 )
 
@@ -333,8 +369,26 @@ def _label_text(value: str) -> str:
     return value.lower().translate(_LABEL_TRANSLATION)
 
 
+def _normalize_numeric(value: str, *, separators: bool = False) -> str:
+    result = []
+    for char in value:
+        fixed = char.translate(_DIGIT_TRANSLATION)
+        if fixed.isdigit() or (separators and fixed in ".,"):
+            result.append(fixed)
+    return "".join(result)
+
+
+def _digits(value: str) -> str:
+    return _normalize_numeric(value)
+
+
+def _month_index(value: str) -> int | None:
+    token = _label_text(value)[:3]
+    return MONTH_ALIASES.get(token)
+
+
 def _money(raw: str) -> int | None:
-    value = re.sub(r"[^\d.,]", "", raw)
+    value = _normalize_numeric(raw, separators=True)
     if not value:
         return None
     decimal_sep = "," if value.rfind(",") > value.rfind(".") else "."
@@ -382,65 +436,127 @@ def _build_date(year: int, month: int, day: int) -> str | None:
 
 
 def _normalize_year(value: str) -> int:
-    year = int(value)
+    year = int(_digits(value))
     if year < 100:
         year += 2000 if year < 70 else 1900
     return year
 
 
+def _mask_non_dates(line: str) -> str:
+    masked = NPWP_RE.sub(" ", line)
+    masked = PHONE_RE.sub(" ", masked)
+    return RECEIPT_NO_RE.sub(" ", masked)
+
+
 def _date_from(lines: list[str]) -> str | None:
     for line in lines:
+        line = _mask_non_dates(line)
         for match in DATE_RE.finditer(line):
-            first_text = match.group(1)
-            first, month, last = (int(part) for part in match.groups())
-            if len(first_text) == 4 or first > 31:
+            first_text, month_text, last_text = match.groups()
+            first, month, last = (int(_digits(part)) for part in match.groups())
+            if len(_digits(first_text)) == 4 or first > 31:
                 year, day = first, last
             else:
                 day = first
-                year = _normalize_year(match.group(3))
+                year = _normalize_year(last_text)
             result = _build_date(year, month, day)
             if result:
                 return result
 
         for match in DATE_TEXT_RE.finditer(line):
-            day = int(match.group(1))
-            month = MONTH_ALIASES.get(match.group(2)[:3].lower())
+            day_text, month_text, year_text = match.groups()
+            month = _month_index(month_text)
             if month is None:
                 continue
-            result = _build_date(_normalize_year(match.group(3)), month, day)
+            result = _build_date(_normalize_year(year_text), month, int(_digits(day_text)))
             if result:
                 return result
 
         for match in DATE_TEXT_REVERSED_RE.finditer(line):
-            month = MONTH_ALIASES.get(match.group(1)[:3].lower())
+            month_text, day_text, year_text = match.groups()
+            month = _month_index(month_text)
             if month is None:
                 continue
-            result = _build_date(_normalize_year(match.group(3)), month, int(match.group(2)))
+            result = _build_date(_normalize_year(year_text), month, int(_digits(day_text)))
             if result:
                 return result
     return None
 
 
 def _clean_text(value: str, limit: int) -> str:
-    cleaned = re.sub(r"[^\w\s.,&/()\-]", " ", value)
+    cleaned = re.sub(r"[^\w\s.,;&/()\-]", " ", value)
     return re.sub(r"\s+", " ", cleaned).strip()[:limit]
 
 
 def _merchant_from(lines: list[str]) -> str:
-    """Pilih nama toko pertama dan buang tanggal, nomor, serta nomor telepon."""
+    """Pilih nama toko dari info_toko dan buang tanggal, nomor, serta alamat."""
     for line in lines:
         value = line.strip(" :-|")
         if len(value) < 3 or IGNORED_MERCHANT_RE.match(value):
             continue
         cut = len(value)
-        for pattern in (DATE_RE, DATE_TEXT_RE, DATE_TEXT_REVERSED_RE, RECEIPT_NO_RE, PHONE_RE):
+        for pattern in (
+            DATE_RE,
+            DATE_TEXT_RE,
+            DATE_TEXT_REVERSED_RE,
+            RECEIPT_NO_RE,
+            PHONE_RE,
+            NPWP_RE,
+            MERCHANT_STOP_RE,
+        ):
             match = pattern.search(value)
             if match:
                 cut = min(cut, match.start())
-        value = value[:cut].strip(" .,:;-|")
-        if len(value) > 2:
+        value = _clean_text(value[:cut].strip(" .,:;-|"), 255)
+        if len(value) > 2 and any(char.isalpha() for char in value):
             return value
     return ""
+
+
+def _total_candidates(lines: list[str]) -> int | None:
+    """Pilih total terbaik; label eksplisit lebih diutamakan dari angka mentah."""
+    scored: list[tuple[int, int]] = []
+    for line in lines:
+        translated = _label_text(line)
+        if not TOTAL_LABEL_RE.search(translated):
+            continue
+        priority = 2 if TOTAL_PRIORITY_RE.search(translated) else 1
+        for amount in _labeled_amounts([line], TOTAL_LABEL_RE):
+            scored.append((priority, amount))
+    if scored:
+        best = max(priority for priority, _ in scored)
+        return max(amount for priority, amount in scored if priority == best)
+
+    amounts = []
+    for line in lines:
+        translated = _label_text(line)
+        if DATE_RE.search(line) or DATE_TEXT_RE.search(line) or DATE_TEXT_REVERSED_RE.search(line):
+            continue
+        if RECEIPT_NO_RE.search(line) or NON_TOTAL_LABEL_RE.search(translated):
+            continue
+        for raw in MONEY_RE.findall(line):
+            amount = _money(raw)
+            if amount:
+                amounts.append(amount)
+    return max(amounts) if amounts else 0
+
+
+def _clean_item_lines(lines: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        translated = _label_text(line)
+        if any(pattern.search(translated) for pattern in (TOTAL_LABEL_RE, SUBTOTAL_LABEL_RE, TAX_LABEL_RE)):
+            continue
+        if NON_TOTAL_LABEL_RE.search(translated) or PHONE_RE.search(line) or NPWP_RE.search(line):
+            continue
+        cleaned = re.sub(r"\s+", " ", line).strip(" .,:;-|")
+        key = cleaned.lower()
+        if len(cleaned) < 2 or key in seen:
+            continue
+        seen.add(key)
+        result.append(cleaned)
+    return result
 
 
 def parse_fields(regions: list[dict]) -> dict:
@@ -455,81 +571,37 @@ def parse_fields(regions: list[dict]) -> dict:
     specific = {name: lines for name, lines in by_class.items() if name not in CONTAINER_CLASSES}
     source = specific or by_class
     all_lines = [line for lines in source.values() for line in lines]
+    info_lines = source.get("info_toko", []) or all_lines
 
     total_lines = list(source.get("total", []))
     for line in all_lines:
         if TOTAL_LABEL_RE.search(_label_text(line)) and line not in total_lines:
             total_lines.append(line)
+    total = _total_candidates(total_lines or all_lines)
 
-    subtotal_values = _labeled_amounts(all_lines, SUBTOTAL_LABEL_RE)
-    tax_values = _labeled_amounts(all_lines, TAX_LABEL_RE)
-    total_values = _labeled_amounts(total_lines, TOTAL_LABEL_RE)
-    subtotal = subtotal_values[0] if subtotal_values else None
-    tax = tax_values[0] if tax_values else None
-    total = total_values[0] if total_values else None
-    if total is None and subtotal is not None and tax is not None:
-        total = subtotal + tax
-    if total is None:
-        amounts = [
-            amount
-            for line in all_lines
-            if not DATE_RE.search(line)
-            and not DATE_TEXT_RE.search(line)
-            and not RECEIPT_NO_RE.search(line)
-            for amount in (_money(value) for value in MONEY_RE.findall(line))
-            if amount
-        ]
-        total = max(amounts) if amounts else None
-    if total is None:
-        total = (subtotal or 0) + (tax or 0)
-
-    receipt_no = ""
-    for line in all_lines:
-        match = RECEIPT_NO_RE.search(line)
-        if not match:
-            continue
-        candidate = match.group(1).upper()[:128]
-        if re.fullmatch(r"\d{1,3}[.,]\d{3}", candidate):
-            continue
-        receipt_no = candidate
-        break
-
-    joined = " ".join(all_lines).lower()
+    payment_lines = source.get("total", []) + source.get("pembayaran", [])
+    payment_text = " ".join(payment_lines or all_lines)
     payment_method = ""
-    for keyword, label in (
-        ("qris", "QRIS"),
-        ("tunai", "Tunai"),
-        ("cash", "Tunai"),
-        ("debit", "Debit"),
-        ("kredit", "Kredit"),
-        ("transfer", "Transfer"),
-    ):
-        if re.search(rf"\b{re.escape(keyword)}\b", joined):
-            payment_method = label
+    for match in PAYMENT_LABEL_RE.finditer(payment_text):
+        label = match.group(0).lower()
+        if label in {"qris", "ovo", "dana", "gopay", "shopeepay"}:
+            payment_method = label.upper()
+        elif label in {"tunai", "cash"}:
+            payment_method = "Tunai"
+        elif label == "debit":
+            payment_method = "Debit"
+        elif label == "kredit":
+            payment_method = "Kredit"
+        elif label == "transfer":
+            payment_method = "Transfer"
+        if payment_method:
             break
 
-    item_lines: list[str] = []
-    for line in source.get("item_belanja", []):
-        translated = _label_text(line)
-        if any(pattern.search(translated) for pattern in (TOTAL_LABEL_RE, SUBTOTAL_LABEL_RE, TAX_LABEL_RE)):
-            continue
-        if not item_lines or item_lines[-1] != line:
-            item_lines.append(line)
-    description = "; ".join(item_lines)
-    direction = (
-        "income"
-        if re.search(r"\b(?:penerimaan|uang masuk|refund|setoran|pendapatan)\b", joined)
-        else "expense"
-    )
-
+    description = "; ".join(_clean_item_lines(source.get("item_belanja", [])))
     return {
-        "transaction_date": _date_from(all_lines),
-        "merchant": _clean_text(_merchant_from(source.get("info_toko", [])), 255),
-        "receipt_number": receipt_no,
+        "transaction_date": _date_from(info_lines) or _date_from(all_lines),
+        "merchant": _clean_text(_merchant_from(info_lines), 255),
         "description": _clean_text(description, 1000),
-        "direction": direction,
-        "subtotal": subtotal,
-        "tax": tax,
         "total": total,
         "currency": "IDR",
         "payment_method": payment_method,
@@ -605,8 +677,7 @@ def _suppress_duplicates(entries: list[dict], threshold: float = 0.85) -> list[d
             (
                 other
                 for other in kept
-                if entry["class"] == other["class"]
-                and _box_overlap(entry["bbox"], other["bbox"]) >= threshold
+                if entry["class"] == other["class"] and _box_overlap(entry["bbox"], other["bbox"]) >= threshold
             ),
             None,
         )

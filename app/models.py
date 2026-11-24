@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -32,7 +32,7 @@ class Session(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    csrf_token: Mapped[str] = mapped_column(String(64), nullable=False)
+    csrf_token: Mapped[str] = mapped_column(String(256), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -41,7 +41,11 @@ class Session(Base):
 
 class Scan(Base):
     __tablename__ = "scans"
-    __table_args__ = (Index("ix_scans_owner_status", "owner_id", "status"), {"sqlite_autoincrement": True})
+    __table_args__ = (
+        Index("ix_scans_owner_status", "owner_id", "status"),
+        UniqueConstraint("owner_id", "image_sha256", name="uq_scans_owner_image"),
+        {"sqlite_autoincrement": True},
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
@@ -52,15 +56,15 @@ class Scan(Base):
 
     transaction_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
     merchant: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    receipt_number: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    _legacy_receipt_number: Mapped[str | None] = mapped_column("receipt_number", String(128), nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    direction: Mapped[str] = mapped_column(String(8), nullable=False, default="expense")
-    subtotal: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    tax: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    _legacy_direction: Mapped[str] = mapped_column("direction", String(8), nullable=False, default="expense")
+    _legacy_subtotal: Mapped[int | None] = mapped_column("subtotal", Integer, nullable=True)
+    _legacy_tax: Mapped[int | None] = mapped_column("tax", Integer, nullable=True)
     total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="IDR")
     payment_method: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    _legacy_notes: Mapped[str] = mapped_column("notes", Text, nullable=False, default="")
     raw_ocr: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)

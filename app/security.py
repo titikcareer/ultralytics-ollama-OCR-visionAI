@@ -106,6 +106,19 @@ def revoke_session(db: Session, token: str | None) -> None:
         db.commit()
 
 
+def revoke_user_sessions(db: Session, user_id: int, except_token: str | None = None) -> int:
+    keep_hash = token_hash(except_token) if except_token else None
+    statement = db.query(UserSession).filter(
+        UserSession.user_id == user_id,
+        UserSession.revoked_at.is_(None),
+    )
+    if keep_hash is not None:
+        statement = statement.filter(UserSession.token_hash != keep_hash)
+    affected = statement.update({"revoked_at": utcnow()}, synchronize_session=False)
+    db.commit()
+    return affected
+
+
 def csrf_matches(session: UserSession, supplied: str | None) -> bool:
     return bool(supplied) and hmac.compare_digest(session.csrf_token, supplied or "")
 

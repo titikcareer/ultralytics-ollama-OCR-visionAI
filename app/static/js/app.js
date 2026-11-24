@@ -52,6 +52,31 @@
     element.classList.toggle('is-bad', !isGood);
   }
 
+  let statusTimer = null;
+
+  function stopStatusPolling() {
+    if (statusTimer !== null) {
+      window.clearInterval(statusTimer);
+      statusTimer = null;
+    }
+  }
+
+  function canPollStatus() {
+    return !!(document.body && document.body.dataset.auth === 'true'
+      && document.getElementById('serverStatus')
+      && document.getElementById('ocrStatus'));
+  }
+
+  function startStatusPolling() {
+    if (!canPollStatus()) return;
+    stopStatusPolling();
+    refreshStatus();
+    statusTimer = window.setInterval(refreshStatus, 60000);
+  }
+
+  const logoutForm = document.getElementById('logoutForm');
+  if (logoutForm) logoutForm.addEventListener('submit', stopStatusPolling);
+
   function startClock() {
     const timeElement = document.getElementById('clockTime');
     if (!timeElement) return;
@@ -79,11 +104,22 @@
   }
 
   async function refreshStatus() {
+    if (!canPollStatus()) {
+      stopStatusPolling();
+      return;
+    }
     const serverElement = document.getElementById('serverStatus');
     const ocrElement = document.getElementById('ocrStatus');
-    if (!serverElement || !ocrElement) return;
     try {
       const response = await fetch('/api/status', { headers: { 'Accept': 'application/json' } });
+      if (response.redirected && new URL(response.url, window.location.origin).pathname === '/login') {
+        stopStatusPolling();
+        return;
+      }
+      if (response.status === 401 || response.status === 303) {
+        stopStatusPolling();
+        return;
+      }
       if (!response.ok) throw new Error('Status tidak tersedia');
       const data = await response.json();
       setPill(serverElement, true, 'Server: Terhubung');
@@ -252,37 +288,110 @@
 
     function toAmount(value, fallback) {
       if (value === '' || value === null || typeof value === 'undefined') return fallback;
-      let text = String(value).trim().replace(/\s/g, '');
-      const commaDecimal = /^-?\d+,\d{1,2}$/.test(text);
-      const dotDecimal = /^-?\d+\.\d{1,2}$/.test(text);
-      if (!commaDecimal && !dotDecimal) text = text.replace(/[.,]/g, '');
-      else if (commaDecimal) text = text.replace(',', '.');
+      let text = String(value).trim().replace(/[\s\u00a0]/g, '');
+      const idThousands = /^-?\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?$/.test(text);
+      const usThousands = /^-?\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?$/.test(text);
+      const decimal = /^-?\d+[.,]\d{1,2}$/.test(text);
+      const integer = /^-?\d+$/.test(text);
+      if (idThousands) text = text.replace(/\./g, '').replace(',', '.');
+      else if (usThousands) text = text.replace(/,/g, '');
+      else if (decimal) text = text.replace(',', '.');
+      else if (!integer) return fallback;
       const parsed = Number(text);
-      return Number.isFinite(parsed) ? Math.round(parsed) : fallback;
+      return Number.isInteger(parsed) ? parsed : fallback;
+    }
+
+    const VERIFICATIONS = [
+      { field: 'transaction_date', label: 'Tanggal Transaksi', name: 'verified_transaction_date' },
+      { field: 'merchant', label: 'Nama Toko', name: 'verified_merchant' },
+      { field: 'total', label: 'Total (Rp)', name: 'verified_total' }
+    ];
+
+    function verificationCheckbox(name) {
+      return reviewForm.querySelector('input[name="' + name + '"]');
+    }
+
+    function hasValue(field) {
+      const element = reviewForm.elements.namedItem(field);
+      if (!element) return false;
+      if (field === 'total') {
+        const amount = toAmount(element.value, null);
+        return amount !== null && amount > 0;
+      }
+      return String(element.value || '').trim() !== '';
+    }
+
+    function syncVerification(item) {
+      const checkbox = verificationCheckbox(item.name);
+      if (checkbox) checkbox.checked = hasValue(item.field);
+    }
+
+    VERIFICATIONS.forEach(function (item) {
+      const element = reviewForm.elements.namedItem(item.field);
+      if (element) {
+        element.addEventListener('input', function () { syncVerification(item); });
+        element.addEventListener('change', function () { syncVerification(item); });
+      }
+      syncVerification(item);
+    });
+
+    const verifyAllBtn = document.getElementById('verifyAllBtn');
+    if (verifyAllBtn) {
+      verifyAllBtn.addEventListener('click', function () {
+        VERIFICATIONS.forEach(function (item) {
+          const checkbox = verificationCheckbox(item.name);
+          if (checkbox) checkbox.checked = true;
+        });
+      });
     }
 
     function payloadFromForm() {
       const payload = {};
       Array.prototype.forEach.call(reviewForm.elements, function (element) {
-        if (!element.name || element.type === 'hidden') return;
+        if (!element.name || element.type === 'hidden' || element.type === 'checkbox') return;
         if (element.type === 'number') {
           payload[element.name] = toAmount(element.value, null);
         } else {
           payload[element.name] = element.value;
         }
       });
-      payload.total = toAmount(payload.total, 0);
+      payload.total = toAmount(payload.total, null);
+      payload.verified_fields = [];
+      Array.prototype.forEach.call(
+        reviewForm.querySelectorAll('input[type="checkbox"]:checked'),
+        function (element) {
+          const field = element.name.replace(/^verified_/, '');
+          const known = VERIFICATIONS.some(function (item) { return item.field === field; });
+          if (known) payload.verified_fields.push(field);
+        }
+      );
       return payload;
     }
 
+    function missingVerifications(payload) {
+      return VERIFICATIONS.filter(function (item) {
+        const checkbox = verificationCheckbox(item.name);
+        return !checkbox || !checkbox.checked || !hasValue(item.field) || payload[item.field] === null;
+      });
+    }
+
     saveBtn.addEventListener('click', async function () {
-      saveBtn.disabled = true;
       hide(errorBox);
+      const payload = payloadFromForm();
+      const missing = missingVerifications(payload);
+      if (missing.length) {
+        const labels = missing.map(function (item) { return item.label; }).join(', ');
+        show(errorBox, labels + ' belum terisi' + '.');
+        const firstCheckbox = verificationCheckbox(missing[0].name);
+        if (firstCheckbox) firstCheckbox.focus();
+        return;
+      }
+      saveBtn.disabled = true;
       try {
         await api('/api/scans/' + saveBtn.dataset.scanId + '/confirm', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payloadFromForm())
+          body: JSON.stringify(payload)
         });
         location.href = '/history';
       } catch (err) {
@@ -309,9 +418,13 @@
     const errorBox = document.getElementById('error');
     const statusBox = document.getElementById('status');
     exportBtn.addEventListener('click', async function () {
+      if (exportBtn.dataset.ready !== 'true') {
+        show(errorBox, exportBtn.dataset.emptyMessage || 'Belum ada data yang siap diexport.');
+        return;
+      }
       exportBtn.disabled = true;
       hide(errorBox);
-        show(statusBox, 'Sedang menyiapkan laporan Excel...');
+      show(statusBox, 'Sedang menyiapkan laporan Excel...');
 
       try {
         const data = await api('/api/exports', { method: 'POST' });
@@ -340,6 +453,21 @@
       } catch (err) {
         show(errorBox, err.message);
       }
+    });
+
+    Array.prototype.forEach.call(document.querySelectorAll('.reset-password'), function (button) {
+      button.addEventListener('click', async function () {
+        if (!window.confirm('Reset kata sandi ' + button.dataset.username + '? Sesi aktif akan dicabut.')) return;
+        button.disabled = true;
+        try {
+          const data = await api('/admin/users/' + button.dataset.userId + '/reset-password', { method: 'POST' });
+          show(noticeBox, data.message + ' Password: ' + data.temporary_password);
+        } catch (err) {
+          show(errorBox, err.message);
+        } finally {
+          button.disabled = false;
+        }
+      });
     });
   }
 
@@ -373,7 +501,39 @@
     });
   }
 
+  const rollbackBtn = document.getElementById('rollbackBtn');
+  if (rollbackBtn) {
+    const statusBox = document.getElementById('retrainStatus');
+    const errorBox = document.getElementById('retrainError');
+    rollbackBtn.addEventListener('click', async function () {
+      rollbackBtn.disabled = true;
+      hide(errorBox);
+      try {
+        const data = await api('/rollback', { method: 'POST' });
+        show(statusBox, data.reason || 'Model berhasil dikembalikan ke versi sebelumnya.');
+      } catch (err) {
+        show(errorBox, err.message);
+      } finally {
+        rollbackBtn.disabled = false;
+      }
+    });
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll('.verify-feedback'), function (button) {
+    button.addEventListener('click', async function () {
+      button.disabled = true;
+      try {
+        await api('/admin/feedback/' + encodeURIComponent(button.dataset.feedbackId) + '/verify', { method: 'POST' });
+        show(document.getElementById('feedbackStatus'), 'Feedback ' + button.dataset.feedbackId + ' terverifikasi.');
+        button.remove();
+      } catch (err) {
+        show(document.getElementById('feedbackStatus'), err.message);
+        button.disabled = false;
+      }
+    });
+  });
+
   startClock();
-  refreshStatus();
-  window.setInterval(refreshStatus, 30000);
+  startStatusPolling();
+  window.addEventListener('pagehide', stopStatusPolling);
 })();

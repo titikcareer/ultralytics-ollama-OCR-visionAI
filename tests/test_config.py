@@ -7,7 +7,7 @@ from app.config import BASE_DIR, Settings
 def make_settings(**overrides) -> Settings:
     values = {
         "secret_key": "x" * 32,
-        "admin_password": "AdminPass2026!Secure",
+        "admin_password": "CompliantTestPass123!",
     }
     values.update(overrides)
     return Settings(**values)
@@ -34,16 +34,12 @@ def test_admin_password_complexity_is_enforced(password, message):
 
 def test_compliant_admin_password_is_accepted():
     settings = make_settings()
-    assert settings.admin_password == "AdminPass2026!Secure"
+    assert settings.admin_password == "CompliantTestPass123!"
 
 
 def test_env_template_password_satisfies_settings_contract():
     text = (BASE_DIR / ".env.example").read_text(encoding="utf-8")
-    password = next(
-        line.split("=", 1)[1].strip()
-        for line in text.splitlines()
-        if line.startswith("ADMIN_PASSWORD=")
-    )
+    password = next(line.split("=", 1)[1].strip() for line in text.splitlines() if line.startswith("ADMIN_PASSWORD="))
     assert make_settings(admin_password=password).admin_password == password
 
 

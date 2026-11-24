@@ -1,6 +1,7 @@
+import logging
 from pathlib import Path
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import get_settings
@@ -20,6 +21,27 @@ def _engine_kwargs(url: str) -> dict:
 
 engine = create_engine(settings.database_url, **_engine_kwargs(settings.database_url))
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+logger = logging.getLogger(__name__)
+
+
+@event.listens_for(engine, "connect")
+def _apply_sqlite_pragmas(dbapi_connection, connection_record):
+    if not settings.database_url.startswith("sqlite"):
+        return
+    cursor = dbapi_connection.cursor()
+    try:
+        for statement in (
+            "PRAGMA journal_mode=WAL",
+            "PRAGMA foreign_keys=ON",
+            "PRAGMA busy_timeout=5000",
+        ):
+            try:
+                cursor.execute(statement)
+                cursor.fetchone()
+            except Exception as exc:
+                logger.warning("Gagal menerapkan %s: %s", statement, exc)
+    finally:
+        cursor.close()
 
 
 def _ensure_sqlite_scan_sequence() -> None:
@@ -62,6 +84,14 @@ def init_db() -> None:
     settings.export_dir.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
     _ensure_sqlite_scan_sequence()
+    if settings.database_url.startswith("sqlite"):
+        with engine.begin() as connection:
+            try:
+                connection.execute(
+                    text("CREATE UNIQUE INDEX IF NOT EXISTS uq_scans_owner_image ON scans (owner_id, image_sha256)")
+                )
+            except Exception as exc:
+                logger.warning("Indeks unik scans tidak dapat dibuat: %s", exc)
 
 
 def get_db():

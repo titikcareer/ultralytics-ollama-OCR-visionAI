@@ -5,9 +5,7 @@ from pathlib import Path
 _tmp = Path(tempfile.mkdtemp(prefix="receipt-recap-test-"))
 _ml_root = _tmp / "ocr-ml"
 (_ml_root / "configs").mkdir(parents=True, exist_ok=True)
-(_ml_root / "configs" / "classes.txt").write_text(
-    "struk_belanja\ninfo_toko\nitem_belanja\ntotal\n", encoding="utf-8"
-)
+(_ml_root / "configs" / "classes.txt").write_text("struk_belanja\ninfo_toko\nitem_belanja\ntotal\n", encoding="utf-8")
 
 os.environ.update(
     {

@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from app.config import BASE_DIR, get_settings
+from app.schemas import core_receipt_fields
 
 CODE_SRC = BASE_DIR / "ocr-ml" / "src"
 
@@ -76,7 +77,7 @@ def store_feedback(
     return save_feedback(
         image_bytes,
         boxes=boxes,
-        fields=fields,
+        fields=core_receipt_fields(fields),
         employee=employee,
         role=role,
         scan_id=scan_id,
@@ -90,6 +91,18 @@ def verified_feedback_count() -> int:
     from ocr_ml.data.feedback_sync import verified_count
 
     return verified_count(Path(get_settings().ml_root) / "data" / "feedback_loop")
+
+
+def pending_feedback() -> list[dict]:
+    from ocr_ml.data.feedback_sync import pending_feedback as load_pending
+
+    return load_pending(Path(get_settings().ml_root) / "data" / "feedback_loop")
+
+
+def verify_feedback(feedback_id: str) -> dict:
+    from ocr_ml.data.feedback_sync import verify_feedback as verify
+
+    return verify(feedback_id, Path(get_settings().ml_root) / "data" / "feedback_loop")
 
 
 def registry_production() -> dict | None:
@@ -108,3 +121,9 @@ def retrain(force: bool = False) -> dict:
         min_feedback=settings.feedback_threshold,
         epochs=settings.retrain_epochs,
     )
+
+
+def rollback_model() -> dict:
+    from ocr_ml.pipelines.retrain_pipeline import rollback as run_rollback
+
+    return run_rollback(Path(get_settings().ml_root))

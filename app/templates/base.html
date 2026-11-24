@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="color-scheme" content="light">
   <title>{% block title %}{{ app_name }}{% endblock %}</title>
-  <link rel="stylesheet" href="/static/css/app.css">
+  <link rel="stylesheet" href="/static/css/app.css?v={{ asset_version }}">
 </head>
-<body>
+<body data-auth="{{ 'true' if user else 'false' }}">
   <div class="brand-watermark" aria-hidden="true"></div>
 
   <header class="topbar">
@@ -41,7 +41,7 @@
         {% if user %}
         <div class="account">
           <span class="account-name">{{ user.full_name }}</span>
-          <form method="post" action="/logout" class="inline-form">
+          <form method="post" action="/logout" class="inline-form" id="logoutForm">
             <input type="hidden" name="csrf" value="{{ csrf }}">
             <button type="submit" class="text-button">Keluar</button>
           </form>
@@ -67,6 +67,6 @@
     <span class="footer-copy">© 2026 PT GS Battery Indonesia. All rights reserved.</span>
   </footer>
 
-  <script src="/static/js/app.js" defer></script>
+  <script src="/static/js/app.js?v={{ asset_version }}" defer></script>
 </body>
 </html>

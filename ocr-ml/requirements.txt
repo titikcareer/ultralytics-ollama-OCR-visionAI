@@ -1,0 +1,10 @@
+# Dependensi pipeline ML mandiri (YOLOv8 + OCR lokal)
+ultralytics>=8.1,<9
+numpy>=1.24,<3
+opencv-python-headless>=4.8,<5
+
+# OCR engine lokal (pilih salah satu; PaddleOCR adalah nilai default aplikasi)
+paddleocr>=2.7,<3
+easyocr>=1.7,<2
+
+# Alternatif lebih ringan untuk sebagian CPU: easyocr>=1.7,<2

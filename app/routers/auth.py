@@ -1,13 +1,15 @@
 import re
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
 from app.deps import AuthContext, required_context, validate_csrf, validate_pre_csrf
-from app.models import User, utcnow
+from app.models import AuditLog, User, utcnow
 from app.render import render
 from app.security import (
     CSRF_COOKIE,
@@ -16,10 +18,10 @@ from app.security import (
     client_ip,
     create_session,
     hash_password,
-    login_limiter,
     needs_rehash,
     new_csrf_token,
     revoke_session,
+    revoke_user_sessions,
     verify_password,
 )
 
@@ -31,7 +33,10 @@ PASSWORD_MIN = 12
 
 
 def _secure_cookie(request: Request) -> bool:
-    return settings.secure_cookies and request.url.scheme == "https"
+    if not settings.secure_cookies:
+        return False
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    return forwarded == "https" or request.url.scheme == "https"
 
 
 def _cookie_args(request: Request) -> dict:
@@ -62,14 +67,24 @@ async def login(request: Request, db: Session = Depends(get_db)):
     if not USERNAME_RE.fullmatch(username) or not password:
         raise HTTPException(status_code=400, detail="Nama pengguna atau kata sandi salah.")
 
-    if login_limiter.is_locked(username, ip):
+    since = utcnow() - timedelta(minutes=settings.login_lockout_minutes)
+    failures = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.action == "login_failed",
+            AuditLog.target == username,
+            func.coalesce(AuditLog.ip_address, "") == (ip or ""),
+            AuditLog.created_at >= since,
+        )
+        .count()
+    )
+    if failures >= settings.login_max_attempts:
         raise HTTPException(status_code=429, detail="Terlalu banyak percobaan. Silakan coba lagi beberapa saat lagi.")
 
     user = db.query(User).filter(User.username == username).one_or_none()
     valid = user is not None and user.is_active and verify_password(password, user.password_hash)
 
     if not valid:
-        login_limiter.record_failure(username, ip)
         add_audit(db, "login_failed", user=user, target=username, ip_address=ip)
         token = new_csrf_token()
         response = render(
@@ -87,7 +102,6 @@ async def login(request: Request, db: Session = Depends(get_db)):
         user.password_hash = hash_password(password)
         db.commit()
 
-    login_limiter.clear(username, ip)
     user.last_login_at = utcnow()
     session_token, csrf = create_session(db, user, ip)
     add_audit(db, "login", user=user, ip_address=ip)
@@ -156,7 +170,7 @@ async def change_password(
     ctx.user.must_change_password = False
     db.commit()
     add_audit(db, "password_changed", user=ctx.user, ip_address=client_ip(request))
-    revoke_session(db, request.cookies.get(SESSION_COOKIE))
+    revoke_user_sessions(db, ctx.user.id)
 
     response = RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie(SESSION_COOKIE, path="/")

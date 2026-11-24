@@ -72,9 +72,7 @@ def _deskew(gray: object) -> object:
 
     height, width = gray.shape[:2]
     matrix = cv2.getRotationMatrix2D((width / 2, height / 2), angle, 1.0)
-    return cv2.warpAffine(
-        gray, matrix, (width, height), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE
-    )
+    return cv2.warpAffine(gray, matrix, (width, height), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
 
 
 def _pil_enhance(gray: object) -> object:
@@ -106,9 +104,7 @@ def _adaptive_variant(gray: object) -> object:
     import numpy as np
 
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray)
-    binary = cv2.adaptiveThreshold(
-        clahe, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 11
-    )
+    binary = cv2.adaptiveThreshold(clahe, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 11)
     kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
     return _with_border(cv2.filter2D(binary, -1, kernel))
 
@@ -129,9 +125,7 @@ def _otsu_variant(gray: object) -> object:
     return _with_border(binary)
 
 
-def enhance_variants(
-    crop: object, *, deskew: bool = True, upscale: bool = True
-) -> list[tuple[str, object]]:
+def enhance_variants(crop: object, *, deskew: bool = True, upscale: bool = True) -> list[tuple[str, object]]:
     """Hasilkan beberapa versi crop agar OCR dapat memilih yang paling terbaca."""
     gray = _to_gray(crop)
     if deskew:

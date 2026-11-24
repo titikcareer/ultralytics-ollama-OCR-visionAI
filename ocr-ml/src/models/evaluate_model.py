@@ -61,8 +61,8 @@ def evaluate(
 
 
 def should_promote(candidate_map50: float, production_map50: float) -> bool:
-    """Model baru hanya naik produksi jika mAP50 tidak menurun."""
-    return float(candidate_map50) >= float(production_map50)
+    """Model baru hanya naik produksi jika mAP50 naik secara signifikan."""
+    return float(candidate_map50) > float(production_map50) + 0.001
 
 
 def main() -> None:

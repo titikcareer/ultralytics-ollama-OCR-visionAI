@@ -13,16 +13,49 @@ import hashlib
 import json
 import shutil
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 ML_ROOT = Path(__file__).resolve().parents[2]
 FEEDBACK_DIR = ML_ROOT / "data" / "feedback_loop"
 METADATA_FILE = "metadata.jsonl"
 CLASS_FILE = ML_ROOT / "configs" / "classes.txt"
 
-BOX_KEYS = ("class_id", "class", "class_name", "x_center", "y_center", "width", "height",
-            "xmin", "ymin", "xmax", "ymax", "image_width", "image_height")
+BOX_KEYS = (
+    "class_id",
+    "class",
+    "class_name",
+    "x_center",
+    "y_center",
+    "width",
+    "height",
+    "xmin",
+    "ymin",
+    "xmax",
+    "ymax",
+    "image_width",
+    "image_height",
+)
+FEEDBACK_FIELDS = (
+    "transaction_date",
+    "merchant",
+    "description",
+    "total",
+    "currency",
+    "payment_method",
+)
+
+
+def _clean_fields(fields: dict | None) -> dict:
+    if not isinstance(fields, dict):
+        return {}
+    return {name: fields[name] for name in FEEDBACK_FIELDS if fields.get(name) not in (None, "")}
 
 
 def load_classes(root: Path = ML_ROOT) -> list[str]:
@@ -49,6 +82,7 @@ def load_records(feedback_dir: Path = FEEDBACK_DIR) -> list[dict]:
         except json.JSONDecodeError:
             continue
         if isinstance(value, dict):
+            value["fields"] = _clean_fields(value.get("fields"))
             records.append(value)
     return records
 
@@ -62,6 +96,20 @@ def _write_records(records: list[dict], feedback_dir: Path) -> None:
         encoding="utf-8",
     )
     temporary.replace(path)
+
+
+@contextmanager
+def _metadata_lock(feedback_dir: Path):
+    feedback_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = feedback_dir / "metadata.lock"
+    with lock_path.open("a+") as handle:
+        if fcntl is not None:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def _payload_hash(scan_id: int | None, fields: dict | None, boxes: list[dict] | None) -> str:
@@ -149,6 +197,7 @@ def save_feedback(
     if not image_bytes:
         raise ValueError("Gambar feedback kosong")
 
+    fields = _clean_fields(fields)
     pool = Path(feedback_dir) if feedback_dir is not None else Path(root) / "data" / "feedback_loop"
     images_dir = pool / "images"
     labels_dir = pool / "labels"
@@ -156,61 +205,81 @@ def save_feedback(
     labels_dir.mkdir(parents=True, exist_ok=True)
 
     digest = _payload_hash(scan_id, fields, boxes)
-    records = load_records(pool)
-    for record in records:
-        if record.get("payload_hash") == digest and record.get("scan_id") == scan_id:
-            return {
-                "status": "duplicate",
-                "feedback_id": record.get("id"),
-                "verified_count": sum(1 for item in records if item.get("verified")),
-            }
+    with _metadata_lock(pool):
+        records = load_records(pool)
+        for record in records:
+            if record.get("payload_hash") == digest and record.get("scan_id") == scan_id:
+                return {
+                    "status": "duplicate",
+                    "feedback_id": record.get("id"),
+                    "verified_count": sum(1 for item in records if item.get("verified")),
+                }
 
-    image_w, image_h = _image_size(image_bytes)
-    classes = load_classes(Path(root))
-    lines: list[str] = []
-    for box in boxes or []:
-        if not isinstance(box, dict):
-            continue
-        converted = _box_to_yolo(box, classes, image_w, image_h)
-        if converted:
-            lines.append(converted)
-    if not lines and classes:
-        lines.append(f"{classes.index('struk_belanja') if 'struk_belanja' in classes else 0} " + "0.5 0.5 1.0 1.0")
+        image_w, image_h = _image_size(image_bytes)
+        classes = load_classes(Path(root))
+        lines: list[str] = []
+        for box in boxes or []:
+            if not isinstance(box, dict):
+                continue
+            converted = _box_to_yolo(box, classes, image_w, image_h)
+            if converted:
+                lines.append(converted)
+        if not lines and classes:
+            lines.append(f"{classes.index('struk_belanja') if 'struk_belanja' in classes else 0} " + "0.5 0.5 1.0 1.0")
 
-    feedback_id = f"{datetime.now(UTC):%Y%m%d%H%M%S}-{uuid.uuid4().hex[:8]}"
-    image_name = f"{feedback_id}.jpg"
-    label_name = f"{feedback_id}.txt"
-    (images_dir / image_name).write_bytes(image_bytes)
-    (labels_dir / label_name).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        feedback_id = f"{datetime.now(UTC):%Y%m%d%H%M%S}-{uuid.uuid4().hex[:8]}"
+        image_name = f"{feedback_id}.jpg"
+        label_name = f"{feedback_id}.txt"
+        (images_dir / image_name).write_bytes(image_bytes)
+        (labels_dir / label_name).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    record = {
-        "id": feedback_id,
-        "created_at": datetime.now(UTC).isoformat(),
-        "scan_id": scan_id,
-        "employee": employee[:64],
-        "role": role[:16],
-        "verified": bool(verified),
-        "model_version": model_version[:64],
-        "image": f"images/{image_name}",
-        "label": f"labels/{label_name}",
-        "image_width": image_w,
-        "image_height": image_h,
-        "boxes": boxes or [],
-        "fields": fields or {},
-        "payload_hash": digest,
-        "synced_to_train": False,
-    }
-    records.append(record)
-    _write_records(records, pool)
+        record = {
+            "id": feedback_id,
+            "created_at": datetime.now(UTC).isoformat(),
+            "scan_id": scan_id,
+            "employee": employee[:64],
+            "role": role[:16],
+            "verified": bool(verified),
+            "model_version": model_version[:64],
+            "image": f"images/{image_name}",
+            "label": f"labels/{label_name}",
+            "image_width": image_w,
+            "image_height": image_h,
+            "boxes": boxes or [],
+            "fields": fields or {},
+            "payload_hash": digest,
+            "synced_to_train": False,
+        }
+        records.append(record)
+        _write_records(records, pool)
+        verified_count_value = sum(1 for item in records if item.get("verified"))
     return {
         "status": "saved",
         "feedback_id": feedback_id,
-        "verified_count": sum(1 for item in records if item.get("verified")),
+        "verified_count": verified_count_value,
     }
 
 
 def verified_count(feedback_dir: Path = FEEDBACK_DIR) -> int:
     return sum(1 for record in load_records(feedback_dir) if record.get("verified"))
+
+
+def pending_feedback(feedback_dir: Path = FEEDBACK_DIR) -> list[dict]:
+    return [record for record in load_records(feedback_dir) if not record.get("verified")]
+
+
+def verify_feedback(feedback_id: str, feedback_dir: Path = FEEDBACK_DIR) -> dict:
+    pool = Path(feedback_dir)
+    with _metadata_lock(pool):
+        records = load_records(pool)
+        for record in records:
+            if str(record.get("id")) == str(feedback_id):
+                record["verified"] = True
+                record["verified_at"] = datetime.now(UTC).isoformat()
+                record["synced_to_train"] = False
+                _write_records(records, pool)
+                return {"status": "verified", "feedback_id": str(feedback_id)}
+    raise KeyError(str(feedback_id))
 
 
 def sync_feedback_to_dataset(
@@ -228,33 +297,37 @@ def sync_feedback_to_dataset(
     images_dir.mkdir(parents=True, exist_ok=True)
     labels_dir.mkdir(parents=True, exist_ok=True)
 
-    records = load_records(pool)
-    synced = 0
-    for record in records:
-        if only_verified and not record.get("verified"):
-            continue
-        if record.get("synced_to_train"):
-            continue
-        source_image = pool / str(record.get("image", ""))
-        source_label = pool / str(record.get("label", ""))
-        if not source_image.is_file() or not source_label.is_file():
-            continue
-        if pool.resolve() not in source_image.resolve().parents or pool.resolve() not in source_label.resolve().parents:
-            continue
+    with _metadata_lock(pool):
+        records = load_records(pool)
+        synced = 0
+        for record in records:
+            if only_verified and not record.get("verified"):
+                continue
+            if record.get("synced_to_train"):
+                continue
+            source_image = pool / str(record.get("image", ""))
+            source_label = pool / str(record.get("label", ""))
+            if not source_image.is_file() or not source_label.is_file():
+                continue
+            pool_root = pool.resolve()
+            if pool_root not in source_image.resolve().parents or pool_root not in source_label.resolve().parents:
+                continue
 
-        identifier = str(record.get("id") or source_image.stem)
-        target_image = images_dir / f"fb_{identifier}{source_image.suffix.lower()}"
-        target_label = labels_dir / f"fb_{identifier}.txt"
-        if not target_image.is_file():
-            shutil.copy2(source_image, target_image)
-        if not target_label.is_file():
-            shutil.copy2(source_label, target_label)
-        record["synced_to_train"] = True
-        synced += 1
+            identifier = str(record.get("id") or source_image.stem)
+            target_image = images_dir / f"fb_{identifier}{source_image.suffix.lower()}"
+            target_label = labels_dir / f"fb_{identifier}.txt"
+            if not target_image.is_file():
+                shutil.copy2(source_image, target_image)
+            if not target_label.is_file():
+                shutil.copy2(source_label, target_label)
+            record["synced_to_train"] = True
+            synced += 1
 
-    if synced:
-        _write_records(records, pool)
-    return {"synced": synced, "verified": verified_count(pool), "total": len(records)}
+        if synced:
+            _write_records(records, pool)
+        verified = sum(1 for record in records if record.get("verified"))
+        total = len(records)
+    return {"synced": synced, "verified": verified, "total": total}
 
 
 def main() -> None:

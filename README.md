@@ -28,7 +28,7 @@ Proses bisnis yang diotomatisasi:
 1. Karyawan membuka aplikasi di ponsel melalui browser dan login dengan akun karyawan.
 2. Karyawan memotret struk atau payment slip menggunakan kamera belakang, atau memilih gambar dari galeri.
 3. Gambar divalidasi, dibersihkan dari metadata EXIF, dikompresi, lalu dikirim ke server.
-4. YOLOv8 mendeteksi ROI (`struk_belanja`, `info_toko`, `item_belanja`, `total`). Crop diurutkan sesuai urutan baca, duplikasi box dibuang, lalu setiap crop dipertajam dalam beberapa variasi (deskew, upscale teks kecil, CLAHE, adaptive threshold, Otsu). OCR lokal membaca semua variasi; teks dengan keyakinan tertinggi dan urutan baris yang benar dipilih, lalu diubah menjadi JSON terstruktur: tanggal, vendor, nomor dokumen, keterangan, subtotal, pajak, total, mata uang, dan metode pembayaran.
+4. YOLOv8 mendeteksi ROI (`struk_belanja`, `info_toko`, `item_belanja`, `total`). Crop diurutkan sesuai urutan baca, duplikasi box dibuang, lalu setiap crop dipertajam dalam beberapa variasi (deskew, upscale teks kecil, CLAHE, adaptive threshold, Otsu). OCR lokal membaca semua variasi; teks dengan keyakinan tertinggi dan urutan baris yang benar dipilih, lalu diubah menjadi JSON terstruktur untuk field inti: tanggal transaksi, nama toko, keterangan, total, mata uang, dan metode pembayaran. Nomor struk, jenis transaksi, subtotal, pajak, dan catatan tidak dikumpulkan; semua transaksi diekspor sebagai pengeluaran.
 5. Hasil ekstraksi ditampilkan pada halaman tinjauan. Karyawan wajib memeriksa dan dapat mengoreksi setiap field sebelum menyimpan.
 6. Setiap konfirmasi/koreksi otomatis masuk ke `ocr-ml/data/feedback_loop` beserta gambar, label YOLO, identitas karyawan, dan status verifikasinya.
 7. Setelah terkumpul 25 feedback terverifikasi (atau lewat tombol Admin), pipeline melakukan fine-tuning, mengevaluasi mAP50 pada data valid, dan hanya mempromosikan model jika akurasi tidak menurun.
@@ -165,7 +165,7 @@ Buat file `.env` di root proyek. File ini tidak boleh masuk ke repository Git.
 ENVIRONMENT=development
 SECRET_KEY=ganti-dengan-kunci-acak-minimal-32-karakter
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=AdminPass2026!Secure
+ADMIN_PASSWORD=GantiPasswordAdmin123!
 BASE_URL=http://localhost:8000
 SECURE_COOKIES=false
 DATABASE_URL=sqlite:///./data/app.db

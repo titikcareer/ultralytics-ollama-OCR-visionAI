@@ -65,7 +65,7 @@ def test_feedback_sync_roundtrip_and_deduplication(tmp_path):
     first = feedback_sync.save_feedback(
         image,
         boxes=[{"class": "total", "xmin": 0, "ymin": 0, "xmax": 8, "ymax": 4}],
-        fields={"total": 25000},
+        fields={"total": 25000, "direction": "expense", "receipt_number": "INV/001", "notes": "dirty"},
         employee="staff1",
         role="user",
         scan_id=7,
@@ -88,6 +88,7 @@ def test_feedback_sync_roundtrip_and_deduplication(tmp_path):
     assert records[0]["employee"] == "staff1"
     assert records[0]["role"] == "user"
     assert records[0]["verified"] is True
+    assert set(records[0]["fields"]) == {"total"}
     label = (root / "data" / "feedback_loop" / records[0]["label"]).read_text()
     assert label.strip() == "1 0.400000 0.200000 0.800000 0.400000"
 
@@ -106,11 +107,32 @@ def test_parse_fields_from_ocr_regions():
     fields = parse_fields(regions)
     assert fields["merchant"] == "TOKO BATU"
     assert fields["transaction_date"] == "2026-11-20"
-    assert fields["subtotal"] == 100000
-    assert fields["tax"] == 10000
     assert fields["total"] == 110000
     assert fields["payment_method"] == "Tunai"
-    assert fields["direction"] == "expense"
+    assert set(fields) == {"transaction_date", "merchant", "description", "total", "currency", "payment_method"}
+
+
+def test_parse_fields_handles_noisy_dates_and_money():
+    regions = [
+        {
+            "class": "info_toko",
+            "text": (
+                "TOKO SUMBER REJEKI\nJl. Merdeka No. 12 Telp 081234567890\n"
+                "NPWP 12.345.678.9-012.000\nTgl 2O/11/26 No Struk: INV/2026/11/001"
+            ),
+        },
+        {
+            "class": "item_belanja",
+            "text": "Indomie Goreng 3.500\nAqua 600ml 4.000\nSUBTOTAL 9.500\nPPN 950",
+        },
+        {"class": "total", "text": "Grand T0tal 10.450\nTunai 20.000\nKembalian 9.550"},
+    ]
+    fields = parse_fields(regions)
+    assert fields["transaction_date"] == "2026-11-20"
+    assert fields["merchant"] == "TOKO SUMBER REJEKI"
+    assert fields["description"] == "Indomie Goreng 3.500; Aqua 600ml 4.000"
+    assert fields["total"] == 10450
+    assert fields["payment_method"] == "Tunai"
 
 
 def test_feedback_endpoint_saves_employee_correction(logged_in, sample_image, monkeypatch, tmp_path):
@@ -177,7 +199,7 @@ def test_retrain_endpoint_and_admin_status(logged_in, monkeypatch):
 
     html = logged_in.get("/admin").text
     assert "Latih Ulang Model Sekarang" in html
-    assert "Model OCR &amp; Pembelajaran Berkelanjutan" in html
+    assert "Model OCR &amp; Self Learning Model" in html
 
 
 def test_retrain_pipeline_waits_for_feedback_threshold(tmp_path):
@@ -208,7 +230,7 @@ def test_resolved_data_yaml_uses_absolute_processed_path(tmp_path):
 def test_ocr_engine_configuration_is_valid(engine):
     from app.config import Settings
 
-    settings = Settings(secret_key="x" * 32, admin_password="AdminPass2026!Secure", ocr_engine=engine)
+    settings = Settings(secret_key="x" * 32, admin_password="CompliantTestPass123!", ocr_engine=engine)
     assert settings.ocr_engine == engine
 
 
@@ -238,18 +260,21 @@ def test_parse_fields_prefers_labeled_amounts_and_ignores_container_duplicates()
 
     assert fields["merchant"] == "TOKO BATU"
     assert fields["transaction_date"] == "2026-11-20"
-    assert fields["receipt_number"] == "INV/001"
-    assert fields["subtotal"] == 135000
-    assert fields["tax"] == 14000
     assert fields["total"] == 149000
     assert fields["description"] == "BATERAI AA 2 pcs 55.000"
     assert fields["payment_method"] == "Tunai"
 
 
 def test_parse_fields_uses_container_when_no_specific_region_exists():
-    fields = parse_fields([{"class": "struk_belanja", "text": "SUBTOTAL 100.000\nPPN 10.000"}])
+    fields = parse_fields([{"class": "struk_belanja", "text": "TOKO C\n21-11-2026\nGrand Total 110.000"}])
+    assert fields["merchant"] == "TOKO C"
+    assert fields["transaction_date"] == "2026-11-21"
     assert fields["total"] == 110000
-    assert fields["merchant"] == ""
+
+
+def test_parse_fields_does_not_derive_total_from_subtotal_and_tax():
+    fields = parse_fields([{"class": "total", "text": "SUBTOTAL 100.000\nPPN 10.000"}])
+    assert fields["total"] == 0
 
 
 def test_ocr_reading_sorts_lines_and_drops_low_confidence_results():
@@ -286,9 +311,7 @@ def test_ocr_reading_selects_the_best_enhancement_variant(monkeypatch):
                 ([(0, 20), (60, 20), (60, 30), (0, 30)], "TOTAL 149.000", 0.92),
             ]
 
-    text, confidence, variant = _ocr_reading(
-        FakeEasyOCR(), "easyocr", object(), min_confidence=0.3, use_variants=True
-    )
+    text, confidence, variant = _ocr_reading(FakeEasyOCR(), "easyocr", object(), min_confidence=0.3, use_variants=True)
 
     assert variant == "contrast"
     assert text == "TOKO BATU\nTOTAL 149.000"

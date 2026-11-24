@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import threading
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -8,26 +9,35 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
 from app import ml
 from app.config import get_settings
 from app.db import get_db
 from app.deps import AuthContext, required_context, validate_csrf
-from app.excel import export_scans
+from app.excel import export_scans, load_mapping
 from app.images import ImageValidationError, normalize_image
 from app.models import Export, Scan, utcnow
 from app.ocr import OcrError, receipt_from_prediction, run_ocr
 from app.render import render
-from app.schemas import FeedbackRequest, MessageResponse, ReceiptUpdate, ScanResponse
+from app.schemas import (
+    CONFIRM_FIELD_LABELS,
+    ConfirmationRequest,
+    FeedbackRequest,
+    MessageResponse,
+    ScanResponse,
+    core_receipt_fields,
+)
 from app.security import add_audit, client_ip, safe_relative_path
 
 settings = get_settings()
 router = APIRouter(tags=["scans"])
 logger = logging.getLogger(__name__)
 
+_dedupe_lock = threading.Lock()
 FILENAME_RE = re.compile(r"^[A-Za-z0-9_-]+\.xls[x]?$")
 FEEDBACK_BOX_KEYS = {
     "class_id",
@@ -60,23 +70,72 @@ def _no_store(response):
     return response
 
 
+def _content_duplicate(db: Session, owner_id: int, date: str | None, merchant: str | None, total: int, exclude_id=None):
+    if not date or not merchant or not total:
+        return None
+    statement = (
+        select(Scan)
+        .where(
+            Scan.owner_id == owner_id,
+            Scan.status == "confirmed",
+            Scan.transaction_date == date,
+            func.lower(Scan.merchant) == merchant.strip().lower(),
+            Scan.total == total,
+        )
+        .limit(1)
+    )
+    if exclude_id is not None:
+        statement = statement.where(Scan.id != exclude_id)
+    return db.scalars(statement).first()
+
+
 def _to_response(scan: Scan) -> ScanResponse:
     return ScanResponse(
         id=scan.id,
         status=scan.status,
         transaction_date=scan.transaction_date,
         merchant=scan.merchant,
-        receipt_number=scan.receipt_number,
         description=scan.description,
-        direction=scan.direction,
-        subtotal=scan.subtotal,
-        tax=scan.tax,
         total=scan.total,
         currency=scan.currency,
         payment_method=scan.payment_method,
-        notes=scan.notes,
         created_at=scan.created_at.isoformat(),
     )
+
+
+def _confirm_error_detail(exc: ValidationError) -> str:
+    def label(name: str) -> str:
+        return f"{name} ({CONFIRM_FIELD_LABELS.get(name, name)})"
+
+    messages = []
+    for error in exc.errors():
+        location = ".".join(str(part) for part in error["loc"])
+        message = error["msg"]
+        if message.startswith("Value error, "):
+            message = message[len("Value error, ") :]
+        if not location and message.startswith("Field wajib belum diverifikasi:"):
+            names = [part.strip() for part in message.split(":", 1)[1].split(",")]
+            labels = ", ".join(label(name) for name in names)
+            message = f"Field wajib belum diverifikasi. Centang: {labels}."
+        elif not location and message.startswith("Field wajib belum diisi:"):
+            names = [part.strip() for part in message.split(":", 1)[1].split(",")]
+            labels = ", ".join(label(name) for name in names)
+            message = f"Field wajib belum diisi: {labels}."
+        elif location in CONFIRM_FIELD_LABELS:
+            message = f"{location}: {message} ({CONFIRM_FIELD_LABELS[location]})"
+        elif location:
+            message = f"{location}: {message}"
+        messages.append(message)
+    return " ".join(messages) or "Data belum lengkap. Periksa kembali"
+
+
+def _exportable_scans(period: str | None, ctx: AuthContext):
+    statement = select(Scan).where(Scan.status == "confirmed")
+    if period:
+        statement = statement.where(Scan.transaction_date.like(f"{period}-%"))
+    if ctx.user.role != "admin":
+        statement = statement.where(Scan.owner_id == ctx.user.id)
+    return statement.order_by(Scan.transaction_date.asc().nullslast(), Scan.created_at.asc())
 
 
 def _decode_raw(raw: str) -> dict:
@@ -163,60 +222,64 @@ async def create_scan(
     if not isinstance(upload, UploadFile):
         raise HTTPException(status_code=400, detail="Foto dokumen belum dipilih.")
 
+    if Path(upload.filename or "").suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
+        raise HTTPException(status_code=400, detail="Gunakan file JPG, PNG, atau WebP.")
+
     data = await upload.read()
     try:
-        normalized, digest, media_type = normalize_image(data, upload.content_type)
+        normalized, digest, media_type = await run_in_threadpool(normalize_image, data, upload.content_type)
     except ImageValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    duplicate = (
-        db.query(Scan)
-        .filter(Scan.owner_id == ctx.user.id, Scan.image_sha256 == digest)
-        .first()
-    )
-    if duplicate is not None:
-        add_audit(db, "scan_duplicate", user=ctx.user, target=str(duplicate.id), ip_address=client_ip(request))
-        return JSONResponse(
-            status_code=status.HTTP_409_CONFLICT,
-            content={"message": "Dokumen ini sudah pernah dibaca.", "scan_id": duplicate.id},
-        )
-
     try:
-        prediction = run_ocr(normalized)
+        prediction = await run_in_threadpool(run_ocr, normalized)
         receipt = receipt_from_prediction(prediction)
         raw = str(prediction.get("raw_text", ""))
     except OcrError as exc:
         add_audit(db, "scan_ocr_failed", user=ctx.user, ip_address=client_ip(request), detail=str(exc))
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    now = datetime.now(UTC)
-    relative = Path(f"{now:%Y/%m}") / f"{uuid.uuid4().hex}.jpg"
-    destination = settings.upload_dir / relative
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(normalized)
+    with _dedupe_lock:
+        duplicate = db.query(Scan).filter(Scan.owner_id == ctx.user.id, Scan.image_sha256 == digest).first()
+        if duplicate is None:
+            duplicate = _content_duplicate(
+                db,
+                ctx.user.id,
+                receipt.transaction_date,
+                receipt.merchant,
+                receipt.total,
+            )
+        if duplicate is not None:
+            add_audit(db, "scan_duplicate", user=ctx.user, target=str(duplicate.id), ip_address=client_ip(request))
+            return JSONResponse(
+                status_code=status.HTTP_409_CONFLICT,
+                content={"message": "Dokumen ini sudah pernah dibaca.", "scan_id": duplicate.id},
+            )
 
-    scan = Scan(
-        owner_id=ctx.user.id,
-        status="draft",
-        image_path=relative.as_posix(),
-        image_sha256=digest,
-        image_media_type=media_type,
-        transaction_date=receipt.transaction_date,
-        merchant=receipt.merchant,
-        receipt_number=receipt.receipt_number,
-        description=receipt.description,
-        direction=receipt.direction,
-        subtotal=receipt.subtotal,
-        tax=receipt.tax,
-        total=receipt.total,
-        currency=receipt.currency,
-        payment_method=receipt.payment_method,
-        raw_ocr=raw,
-    )
-    db.add(scan)
-    db.commit()
-    db.refresh(scan)
-    add_audit(db, "scan_created", user=ctx.user, target=str(scan.id), ip_address=client_ip(request))
+        now = datetime.now(UTC)
+        relative = Path(f"{now:%Y/%m}") / f"{uuid.uuid4().hex}.jpg"
+        destination = settings.upload_dir / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        await run_in_threadpool(destination.write_bytes, normalized)
+
+        scan = Scan(
+            owner_id=ctx.user.id,
+            status="draft",
+            image_path=relative.as_posix(),
+            image_sha256=digest,
+            image_media_type=media_type,
+            transaction_date=receipt.transaction_date,
+            merchant=receipt.merchant,
+            description=receipt.description,
+            total=receipt.total,
+            currency=receipt.currency,
+            payment_method=receipt.payment_method,
+            raw_ocr=raw,
+        )
+        db.add(scan)
+        db.commit()
+        db.refresh(scan)
+        add_audit(db, "scan_created", user=ctx.user, target=str(scan.id), ip_address=client_ip(request))
 
     return {"scan_id": scan.id, "receipt": _to_response(scan).model_dump()}
 
@@ -242,7 +305,24 @@ async def review_page(
     ctx: AuthContext = Depends(required_context),
 ):
     scan = _owned_scan(db, scan_id, ctx)
-    response = render(request, "review.html", db, scan=_to_response(scan), image_version=scan.image_sha256)
+    low_confidence = []
+    for region in _decode_raw(scan.raw_ocr).get("regions", []):
+        if not isinstance(region, dict):
+            continue
+        try:
+            score = float(region.get("ocr_confidence") or 1.0)
+        except (TypeError, ValueError):
+            continue
+        if score < settings.ocr_min_confidence:
+            low_confidence.append(str(region.get("class") or region.get("class_name") or "field"))
+    response = render(
+        request,
+        "review.html",
+        db,
+        scan=_to_response(scan),
+        image_version=scan.image_sha256,
+        low_confidence=sorted(set(low_confidence)),
+    )
     return _no_store(response)
 
 
@@ -263,49 +343,71 @@ async def confirm_scan(
     else:
         payload = dict(await request.form())
     try:
-        update = ReceiptUpdate.model_validate(payload)
+        update = ConfirmationRequest.model_validate(payload)
     except ValidationError as exc:
-        fields = ", ".join(".".join(str(part) for part in error["loc"]) for error in exc.errors())
+        detail = _confirm_error_detail(exc)
         add_audit(
             db,
             "scan_confirm_failed",
             user=ctx.user,
             target=str(scan.id),
             ip_address=client_ip(request),
-            detail=fields,
+            detail=detail,
         )
-        logger.warning("Confirm validation failed for scan %s: %s", scan_id, fields)
-        raise HTTPException(status_code=422, detail=f"Data belum lengkap. Periksa kembali: {fields}") from exc
+        logger.warning("Confirm validation failed for scan %s: %s", scan_id, detail)
+        raise HTTPException(status_code=422, detail=detail) from exc
 
-    for field in (
-        "transaction_date",
-        "merchant",
-        "receipt_number",
-        "description",
-        "direction",
-        "subtotal",
-        "tax",
-        "total",
-        "currency",
-        "payment_method",
-        "notes",
-    ):
-        setattr(scan, field, getattr(update, field))
+    with _dedupe_lock:
+        duplicate = _content_duplicate(
+            db,
+            scan.owner_id,
+            update.transaction_date,
+            update.merchant,
+            update.total,
+            exclude_id=scan.id,
+        )
+        if duplicate is not None:
+            add_audit(
+                db,
+                "scan_duplicate",
+                user=ctx.user,
+                target=str(duplicate.id),
+                ip_address=client_ip(request),
+                detail=f"confirm:{scan.id}",
+            )
+            return JSONResponse(
+                status_code=status.HTTP_409_CONFLICT,
+                content={
+                    "message": "Struk dengan tanggal, toko, dan total ini sudah disimpan.",
+                    "scan_id": duplicate.id,
+                },
+            )
 
-    scan.status = "confirmed"
-    scan.confirmed_at = utcnow()
-    scan.confirmed_by_id = ctx.user.id
-    db.commit()
+        for field in (
+            "transaction_date",
+            "merchant",
+            "description",
+            "total",
+            "currency",
+            "payment_method",
+        ):
+            setattr(scan, field, getattr(update, field))
+
+        scan.status = "confirmed"
+        scan.confirmed_at = utcnow()
+        scan.confirmed_by_id = ctx.user.id
+        db.commit()
     add_audit(db, "scan_confirmed", user=ctx.user, target=str(scan.id), ip_address=client_ip(request))
 
     try:
-        feedback = _store_feedback(
+        feedback = await run_in_threadpool(
+            _store_feedback,
             request,
             scan,
             ctx,
-            update.model_dump(),
+            core_receipt_fields(update.model_dump()),
             _boxes_from_raw(scan.raw_ocr),
-            verified=True,
+            ctx.user.role == "admin",
         )
         add_audit(
             db,
@@ -338,13 +440,14 @@ async def save_feedback(
     scan = _owned_scan(db, payload.scan_id, ctx)
     boxes = payload.boxes if payload.boxes is not None else _boxes_from_raw(scan.raw_ocr)
     try:
-        result = _store_feedback(
+        result = await run_in_threadpool(
+            _store_feedback,
             request,
             scan,
             ctx,
-            payload.fields.model_dump(),
+            core_receipt_fields(payload.fields.model_dump()),
             boxes,
-            verified=payload.verified,
+            payload.verified and ctx.user.role == "admin",
         )
     except Exception as exc:
         add_audit(
@@ -380,7 +483,7 @@ async def delete_scan(
     relative = Path(scan.image_path)
     absolute = settings.upload_dir / relative
     if safe_relative_path(settings.upload_dir, absolute) and absolute.is_file():
-        absolute.unlink()
+        await run_in_threadpool(absolute.unlink)
     db.delete(scan)
     db.commit()
     add_audit(db, "scan_deleted", user=ctx.user, target=str(scan_id), ip_address=client_ip(request))
@@ -388,12 +491,36 @@ async def delete_scan(
 
 
 @router.get("/history")
-async def history_page(request: Request, db: Session = Depends(get_db), ctx: AuthContext = Depends(required_context)):
-    statement = select(Scan).order_by(Scan.created_at.desc()).limit(200)
+async def history_page(
+    request: Request,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(required_context),
+):
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    statement = select(Scan).order_by(Scan.created_at.desc()).limit(limit + 1).offset(offset)
     if ctx.user.role != "admin":
         statement = statement.where(Scan.owner_id == ctx.user.id)
     scans = db.scalars(statement).all()
-    return _no_store(render(request, "history.html", db, scans=[_to_response(s) for s in scans]))
+    has_next = len(scans) > limit
+    period = load_mapping().report_period
+    export_ready = db.scalars(_exportable_scans(period, ctx).with_only_columns(Scan.id).limit(1)).first() is not None
+    return _no_store(
+        render(
+            request,
+            "history.html",
+            db,
+            scans=[_to_response(s) for s in scans[:limit]],
+            limit=limit,
+            offset=offset,
+            has_prev=offset > 0,
+            has_next=has_next,
+            export_ready=export_ready,
+            report_period=period,
+        )
+    )
 
 
 @router.post("/api/exports")
@@ -403,16 +530,16 @@ async def create_export(
     ctx: AuthContext = Depends(required_context),
     _: None = Depends(validate_csrf),
 ):
-    statement = select(Scan).where(Scan.status == "confirmed").order_by(Scan.created_at)
-    if ctx.user.role != "admin":
-        statement = statement.where(Scan.owner_id == ctx.user.id)
-    scans = db.scalars(statement).all()
+    mapping = load_mapping()
+    period = mapping.report_period
+    scans = db.scalars(_exportable_scans(period, ctx)).all()
     if not scans:
-        raise HTTPException(status_code=400, detail="Belum ada data yang sudah disimpan.")
+        raise HTTPException(status_code=400, detail="Belum ada data yang sudah disimpan pada periode laporan.")
 
-    filename = f"recap_{ctx.user.username}_{datetime.now(UTC):%Y%m%d%H%M%S}_{uuid.uuid4().hex[:8]}.xls"
+    period_part = period or f"{datetime.now(UTC):%Y%m}"
+    filename = f"recap_{period_part}_{ctx.user.username}_{datetime.now(UTC):%Y%m%d%H%M%S}_{uuid.uuid4().hex[:8]}.xls"
     try:
-        path, media_type = export_scans(list(scans), filename)
+        path, media_type = await run_in_threadpool(export_scans, list(scans), filename)
     except Exception as exc:
         add_audit(db, "export_failed", user=ctx.user, ip_address=client_ip(request), detail=type(exc).__name__)
         raise HTTPException(status_code=500, detail="Laporan Excel belum bisa dibuat. Silakan coba lagi.") from exc
@@ -446,8 +573,14 @@ async def download_export(
     if not path.is_file() or not safe_relative_path(settings.export_dir, path):
         raise HTTPException(status_code=404, detail="File tidak ditemukan")
     add_audit(db, "export_downloaded", user=ctx.user, target=filename, ip_address=client_ip(request))
-    return FileResponse(
+    suffix = path.suffix.lower()
+    media_type = {
+        ".xls": "application/vnd.ms-excel",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }.get(suffix, "application/octet-stream")
+    response = FileResponse(
         path,
-        filename=f"Recap-{datetime.now(UTC):%Y%m%d}.xls",
-        media_type="application/vnd.ms-excel",
+        filename=f"Recap-{datetime.now(UTC):%Y%m%d}{suffix}",
+        media_type=media_type,
     )
+    return _no_store(response)

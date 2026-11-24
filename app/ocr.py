@@ -3,7 +3,7 @@
 from pydantic import ValidationError
 
 from app import ml
-from app.schemas import ExtractedReceipt
+from app.schemas import ExtractedReceipt, core_receipt_fields
 
 OCR_UNAVAILABLE = "Model OCR lokal belum siap. Silakan hubungi tim IT."
 
@@ -32,7 +32,7 @@ def run_ocr(image_bytes: bytes) -> dict:
 
 def receipt_from_prediction(prediction: dict) -> ExtractedReceipt:
     try:
-        return ExtractedReceipt.model_validate(prediction.get("fields") or {})
+        return ExtractedReceipt.model_validate(core_receipt_fields(prediction.get("fields") or {}))
     except (ValidationError, TypeError, AttributeError) as exc:
         raise OcrError(OCR_UNAVAILABLE) from exc
 

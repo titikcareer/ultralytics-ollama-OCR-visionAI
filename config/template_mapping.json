@@ -2,6 +2,7 @@
   "template_path": "templates/CashOpname-November-2026-Templates.xls",
   "sheet_name": "Cash on Hand Harian Nov 2026",
   "first_data_row": 11,
+  "report_period": "2026-11",
   "columns": {
     "no": "A",
     "date": "B",
@@ -13,5 +14,6 @@
   "opening_balance_cell": "H10",
   "date_style_cell": "B11",
   "description_format": "{merchant} - {description}",
-  "opening_balance": 2638400
+  "opening_balance": 2638400,
+  "transaction_direction": "expense"
 }

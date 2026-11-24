@@ -1,22 +1,23 @@
 {
   "schema_version": 1,
   "production": {
-    "version": "v20261122075639",
-    "trained_at": "2026-11-22T08:07:11.981753+00:00",
-    "path": "models/production/best.pt",
+    "version": "v20261124075333",
+    "trained_at": "2026-11-24T08:05:20.018762+00:00",
+    "path": "models/versions/v20261124075333/best.pt",
     "source": "retrain",
     "base_weights": "/Volumes/flashdrive.ghxfarr/ghxfarr/Development/Agile-DevOps/visionAI/ultralytics-ollama-OCR-rebuild/ocr-ml/models/production/best.pt",
     "epochs": 20,
     "data": "/Volumes/flashdrive.ghxfarr/ghxfarr/Development/Agile-DevOps/visionAI/ultralytics-ollama-OCR-rebuild/ocr-ml/configs/data.yaml",
-    "map50": 0.798183,
-    "map50_95": 0.531474,
-    "precision": 0.754211,
-    "recall": 0.762032,
+    "map50": 0.832441,
+    "map50_95": 0.554513,
+    "precision": 0.805729,
+    "recall": 0.773543,
     "promoted": true,
-    "feedback_samples": 1,
-    "synced_samples": 1,
-    "previous_map50": 0.349749,
-    "candidate_map50": 0.798183
+    "feedback_samples": 5,
+    "synced_samples": 4,
+    "previous_map50": 0.798183,
+    "candidate_map50": 0.832441,
+    "evaluation_error": null
   },
   "history": [
     {
@@ -51,6 +52,25 @@
       "synced_samples": 1,
       "previous_map50": 0.349749,
       "candidate_map50": 0.798183
+    },
+    {
+      "version": "v20261124075333",
+      "trained_at": "2026-11-24T08:05:20.018762+00:00",
+      "path": "models/versions/v20261124075333/best.pt",
+      "source": "retrain",
+      "base_weights": "/Volumes/flashdrive.ghxfarr/ghxfarr/Development/Agile-DevOps/visionAI/ultralytics-ollama-OCR-rebuild/ocr-ml/models/production/best.pt",
+      "epochs": 20,
+      "data": "/Volumes/flashdrive.ghxfarr/ghxfarr/Development/Agile-DevOps/visionAI/ultralytics-ollama-OCR-rebuild/ocr-ml/configs/data.yaml",
+      "map50": 0.832441,
+      "map50_95": 0.554513,
+      "precision": 0.805729,
+      "recall": 0.773543,
+      "promoted": true,
+      "feedback_samples": 5,
+      "synced_samples": 4,
+      "previous_map50": 0.798183,
+      "candidate_map50": 0.832441,
+      "evaluation_error": null
     }
   ]
 }

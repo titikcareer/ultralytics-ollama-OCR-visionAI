@@ -27,7 +27,7 @@ def column_index(letter: str) -> int:
 
 
 def safe_text(value: str | None) -> str:
-    text = (value or "").strip()
+    text = "".join(char for char in (value or "") if char.isprintable() or char in "\t\n\r").strip()
     if text.startswith(FORMULA_PREFIXES):
         return "'" + text
     return text
@@ -61,6 +61,13 @@ class BaseExporter(ABC):
         letters = "".join(ch for ch in ref if ch.isalpha())
         digits = "".join(ch for ch in ref if ch.isdigit())
         return int(digits) - 1, column_index(letters)
+
+    def _column_span(self) -> tuple[int, int]:
+        indices = [
+            column_index(getattr(self.mapping.columns, name))
+            for name in ("no", "date", "description", "debit", "credit", "balance")
+        ]
+        return min(indices), max(indices)
 
 
 class XlsExporter(BaseExporter):
@@ -139,11 +146,16 @@ class XlsExporter(BaseExporter):
         opening = self.opening_balance()
         balance = opening
         start = self.mapping.first_data_row - 1
+        min_col, max_col = self._column_span()
+        last = self.mapping.last_data_row or self.source_sheet.nrows
+        for r in range(start, max(start, last)):
+            for c in range(min_col, max_col + 1):
+                self.worksheet.write(r, c, "", general_style)
 
         for offset, row in enumerate(rows):
             r = start + offset
             amount = int(row["amount"])
-            if row["direction"] == "income":
+            if self.mapping.transaction_direction == "income":
                 debit, credit = amount, None
                 balance += amount
             else:
@@ -197,11 +209,16 @@ class XlsxExporter(BaseExporter):
         cols = self.mapping.columns
         balance = self.opening_balance()
         start = self.mapping.first_data_row
+        min_col, max_col = self._column_span()
+        last = self.mapping.last_data_row or self.worksheet.max_row
+        for r in range(start + 1, last + 1):
+            for c in range(min_col + 1, max_col + 2):
+                self.worksheet.cell(row=r, column=c).value = None
 
         for offset, row in enumerate(rows):
             r = start + offset
             amount = int(row["amount"])
-            if row["direction"] == "income":
+            if self.mapping.transaction_direction == "income":
                 debit, credit = amount, None
                 balance += amount
             else:
@@ -243,7 +260,7 @@ def build_rows(scans: list, mapping: TemplateMapping) -> list[dict]:
                 "no": index,
                 "date": scan.transaction_date,
                 "description": text.strip(" -")[:500],
-                "direction": scan.direction,
+                "direction": mapping.transaction_direction,
                 "amount": int(scan.total),
             }
         )

@@ -1,3 +1,4 @@
+import hashlib
 from functools import lru_cache
 from pathlib import Path
 
@@ -45,7 +46,7 @@ class Settings(BaseSettings):
 
     @field_validator("admin_password", mode="before")
     @classmethod
-    def validate_admin_password(cls, value):
+    def validate_admin_password(cls, value, info):
         if not isinstance(value, str):
             raise ValueError("ADMIN_PASSWORD harus berupa teks")
         if len(value) < 12:
@@ -58,6 +59,10 @@ class Settings(BaseSettings):
             raise ValueError("ADMIN_PASSWORD harus memuat angka")
         if not any(char in "!@#$%^&*()-_=+[]{};:,.<>?/" for char in value):
             raise ValueError("ADMIN_PASSWORD harus memuat simbol")
+        environment = str(info.data.get("environment", "")).lower()
+        compromised = "e7aea3230168609a9e9e398077170c0e2325323b348869d2c9ebf0d81cca9645"
+        if hashlib.sha256(value.encode()).hexdigest() == compromised and environment in {"production", "prod"}:
+            raise ValueError("ADMIN_PASSWORD pernah terbuka di repository; lakukan rotasi sebelum produksi")
         return value
 
     @field_validator("ocr_engine")

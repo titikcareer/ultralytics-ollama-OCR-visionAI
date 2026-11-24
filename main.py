@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Ultralytics YOLO11 + Google AI Studio (Gemini Vision) OCR
 """
@@ -22,9 +21,7 @@ load_dotenv()
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="YOLO Model Configuration")
-parser.add_argument(
-    "--model", type=str, default="alpr-yolo11s-aug.pt", help="YOLO model path."
-)
+parser.add_argument("--model", type=str, default="alpr-yolo11s-aug.pt", help="YOLO model path.")
 args = parser.parse_args()
 
 # Load YOLO model
@@ -111,7 +108,7 @@ def predict(img, conf_threshold, iou_threshold, api_key_input, model_choice, cus
     prompt = (
         f"There are {len(cropped_parts)} cropped license plate images in order. "
         "For each image, extract all license plate characters as a single string without spaces. "
-        "If no text is visible for an image, use an empty string \"\". "
+        'If no text is visible for an image, use an empty string "". '
         "Return ONLY valid JSON with this exact schema:\n"
         '{"content": ["PLATE1", "PLATE2"]}'
     )
@@ -147,7 +144,8 @@ with gr.Blocks(title="Ultralytics Gradio with Google Gemini Vision OCR") as demo
         """
 # Ultralytics Gradio with Google Gemini Vision OCR
 
-Upload images for OCR inference and License Plate Recognition. YOLO detects the regions of interest and Google Gemini Vision extracts the text without requiring a local Ollama server.
+Upload images for OCR inference and License Plate Recognition. YOLO detects the regions of
+interest and Google Gemini Vision extracts the text without requiring a local Ollama server.
 """
     )
 
@@ -156,12 +154,8 @@ Upload images for OCR inference and License Plate Recognition. YOLO detects the 
             img_input = gr.Image(type="pil", label="Upload Image")
 
             with gr.Row():
-                conf_slider = gr.Slider(
-                    minimum=0, maximum=1, value=0.25, label="Confidence threshold"
-                )
-                iou_slider = gr.Slider(
-                    minimum=0, maximum=1, value=0.45, label="IoU threshold"
-                )
+                conf_slider = gr.Slider(minimum=0, maximum=1, value=0.25, label="Confidence threshold")
+                iou_slider = gr.Slider(minimum=0, maximum=1, value=0.45, label="IoU threshold")
 
             api_key_box = gr.Textbox(
                 label="Google AI Studio API Key (Opsional jika sudah ada di .env)",
