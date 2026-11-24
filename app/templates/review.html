@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Periksa Hasil - {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head row-between">
+  <div>
+    <h1>Periksa Hasil Pembacaan Dokumen</h1>
+    <p class="muted">Pastikan data di bawah ini sudah benar sebelum disimpan ke rekap.</p>
+  </div>
+  <a class="text-link" href="/history">Kembali ke riwayat</a>
+</section>
+
+<section class="card">
+  <div class="review-layout">
+    <figure class="receipt-preview">
+      <img src="/api/scans/{{ scan.id }}/image?v={{ image_version }}" alt="Foto dokumen yang dibaca">
+      <figcaption class="muted small">Foto dokumen yang dibaca</figcaption>
+    </figure>
+
+    <form id="reviewForm" class="form-grid">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+
+      <div class="field">
+        <label for="transaction_date">Tanggal transaksi</label>
+        <input id="transaction_date" type="date" name="transaction_date" value="{{ scan.transaction_date or '' }}">
+      </div>
+      <div class="field">
+        <label for="merchant">Nama toko / vendor</label>
+        <input id="merchant" type="text" name="merchant" maxlength="255" value="{{ scan.merchant or '' }}">
+      </div>
+      <div class="field">
+        <label for="receipt_number">Nomor struk</label>
+        <input id="receipt_number" type="text" name="receipt_number" maxlength="128" value="{{ scan.receipt_number or '' }}">
+      </div>
+      <div class="field">
+        <label for="direction">Jenis transaksi</label>
+        <select id="direction" name="direction">
+          <option value="expense" {% if scan.direction == 'expense' %}selected{% endif %}>Pengeluaran (uang keluar)</option>
+          <option value="income" {% if scan.direction == 'income' %}selected{% endif %}>Penerimaan (uang masuk)</option>
+        </select>
+      </div>
+      <div class="field field-wide">
+        <label for="description">Keterangan</label>
+        <textarea id="description" name="description" rows="2" maxlength="1000">{{ scan.description or '' }}</textarea>
+      </div>
+      <div class="field">
+        <label for="subtotal">Subtotal (Rp)</label>
+        <input id="subtotal" type="number" name="subtotal" min="0" step="1" value="{{ scan.subtotal if scan.subtotal is not none else '' }}">
+      </div>
+      <div class="field">
+        <label for="tax">Pajak (Rp)</label>
+        <input id="tax" type="number" name="tax" min="0" step="1" value="{{ scan.tax if scan.tax is not none else '' }}">
+      </div>
+      <div class="field">
+        <label for="total">Total (Rp)</label>
+        <input id="total" type="number" name="total" min="0" step="1" required value="{{ scan.total }}">
+      </div>
+      <div class="field">
+        <label for="currency">Mata uang</label>
+        <input id="currency" type="text" name="currency" maxlength="8" value="{{ scan.currency }}">
+      </div>
+      <div class="field">
+        <label for="payment_method">Cara pembayaran</label>
+        <input id="payment_method" type="text" name="payment_method" maxlength="64" value="{{ scan.payment_method or '' }}">
+      </div>
+      <div class="field field-wide">
+        <label for="notes">Catatan</label>
+        <textarea id="notes" name="notes" rows="2" maxlength="2000">{{ scan.notes or '' }}</textarea>
+      </div>
+    </form>
+  </div>
+
+  <p class="notice notice-error" id="error" role="alert" hidden></p>
+  <div class="actions actions-end">
+    <button type="button" class="danger" id="deleteBtn" data-scan-id="{{ scan.id }}">Hapus Data</button>
+    <button type="button" class="primary" id="saveBtn" data-scan-id="{{ scan.id }}">Simpan Data</button>
+  </div>
+</section>
+{% endblock %}

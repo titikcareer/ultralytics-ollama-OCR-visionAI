@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Baca Dokumen - {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Baca Dokumen</h1>
+  <p class="muted">Ambil foto struk atau slip pembayaran, lalu periksa hasilnya sebelum disimpan.</p>
+</section>
+
+<section class="card scan-card">
+  <p class="step-hint">Langkah 1: Pilih foto dokumen yang jelas → Langkah 2: Klik tombol Mulai Baca Dokumen</p>
+
+  <div class="scanner" id="scanner">
+    <video id="preview" playsinline muted autoplay hidden></video>
+    <canvas id="frame" hidden></canvas>
+    <img id="still" alt="Foto dokumen yang dipilih" hidden>
+    <div class="scanner-placeholder" id="placeholder">
+      <p>Kamera belum dinyalakan.</p>
+      <p class="muted small">Tekan Aktifkan Kamera atau pilih foto yang sudah tersedia.</p>
+    </div>
+  </div>
+
+  <p class="notice notice-error" id="error" role="alert" hidden></p>
+  <p class="notice" id="status" role="status" hidden></p>
+
+  <div class="actions">
+    <button type="button" id="startBtn" class="secondary">Aktifkan Kamera</button>
+    <button type="button" id="captureBtn" class="secondary" hidden>Ambil Foto</button>
+    <button type="button" id="retakeBtn" class="secondary" hidden>Ulangi</button>
+    <button type="button" id="processBtn" class="primary" hidden>Mulai Baca Dokumen</button>
+  </div>
+
+  <div class="upload-row drop-zone" id="dropZone">
+    <label for="fileInput" class="drop-label">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 16V4m0 0L8 8m4-4 4 4"></path>
+        <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"></path>
+      </svg>
+      <strong>Pilih atau Tarik Foto/Dokumen ke Sini</strong>
+      <span class="muted small">Gunakan foto yang jelas dan tidak terpotong. Format: JPG, PNG, atau WEBP.</span>
+    </label>
+    <input id="fileInput" type="file" accept="image/jpeg,image/png,image/webp">
+  </div>
+</section>
+{% endblock %}

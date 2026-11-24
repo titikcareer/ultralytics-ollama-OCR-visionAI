@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "production": {
+    "version": "v20261122075639",
+    "trained_at": "2026-11-22T08:07:11.981753+00:00",
+    "path": "models/production/best.pt",
+    "source": "retrain",
+    "base_weights": "/Volumes/flashdrive.ghxfarr/ghxfarr/Development/Agile-DevOps/visionAI/ultralytics-ollama-OCR-rebuild/ocr-ml/models/production/best.pt",
+    "epochs": 20,
+    "data": "/Volumes/flashdrive.ghxfarr/ghxfarr/Development/Agile-DevOps/visionAI/ultralytics-ollama-OCR-rebuild/ocr-ml/configs/data.yaml",
+    "map50": 0.798183,
+    "map50_95": 0.531474,
+    "precision": 0.754211,
+    "recall": 0.762032,
+    "promoted": true,
+    "feedback_samples": 1,
+    "synced_samples": 1,
+    "previous_map50": 0.349749,
+    "candidate_map50": 0.798183
+  },
+  "history": [
+    {
+      "version": "v20261121095749",
+      "trained_at": "2026-11-21T10:05:49.470070+00:00",
+      "path": "models/production/best.pt",
+      "source": "production",
+      "base_weights": "yolov8n.pt",
+      "epochs": 50,
+      "data": "/Volumes/flashdrive.ghxfarr/ghxfarr/Development/Agile-DevOps/visionAI/ultralytics-ollama-OCR-rebuild/ocr-ml/configs/data.yaml",
+      "map50": 0.349749,
+      "map50_95": 0.212204,
+      "precision": 0.842701,
+      "recall": 0.348016,
+      "promoted": true,
+      "feedback_samples": 0
+    },
+    {
+      "version": "v20261122075639",
+      "trained_at": "2026-11-22T08:07:11.981753+00:00",
+      "path": "models/production/best.pt",
+      "source": "retrain",
+      "base_weights": "/Volumes/flashdrive.ghxfarr/ghxfarr/Development/Agile-DevOps/visionAI/ultralytics-ollama-OCR-rebuild/ocr-ml/models/production/best.pt",
+      "epochs": 20,
+      "data": "/Volumes/flashdrive.ghxfarr/ghxfarr/Development/Agile-DevOps/visionAI/ultralytics-ollama-OCR-rebuild/ocr-ml/configs/data.yaml",
+      "map50": 0.798183,
+      "map50_95": 0.531474,
+      "precision": 0.754211,
+      "recall": 0.762032,
+      "promoted": true,
+      "feedback_samples": 1,
+      "synced_samples": 1,
+      "previous_map50": 0.349749,
+      "candidate_map50": 0.798183
+    }
+  ]
+}

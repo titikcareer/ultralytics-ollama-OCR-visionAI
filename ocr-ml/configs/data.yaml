@@ -1,0 +1,11 @@
+# Dibuat otomatis oleh ocr-ml/src/data/make_dataset.py
+path: ../data/processed
+train: train/images
+val: valid/images
+test: test/images
+nc: 4
+names:
+  - struk_belanja
+  - info_toko
+  - item_belanja
+  - total

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Riwayat - {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head row-between">
+  <div>
+    <h1>Riwayat Pemindaian</h1>
+    <p class="muted">Data yang sudah disimpan bisa dibuatkan laporan Excel.</p>
+  </div>
+  <button type="button" id="exportBtn" class="primary">Buat Laporan Excel</button>
+</section>
+
+<p class="notice notice-error" id="error" role="alert" hidden></p>
+<p class="notice" id="status" role="status" hidden></p>
+
+<section class="card table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Tanggal</th>
+        <th>Nama Toko</th>
+        <th>Keterangan</th>
+        <th class="num">Total</th>
+        <th>Keadaan</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for scan in scans %}
+      <tr>
+        <td>{{ scan.transaction_date or '-' }}</td>
+        <td>{{ scan.merchant or '-' }}</td>
+        <td class="truncate">{{ scan.description or '-' }}</td>
+        <td class="num">{{ '{:,.0f}'.format(scan.total) }}</td>
+        <td>
+          <span class="badge badge-{{ scan.status }}">
+            {{ 'Sudah Disimpan' if scan.status == 'confirmed' else 'Belum Selesai' }}
+          </span>
+        </td>
+        <td><a class="text-link" href="/scans/{{ scan.id }}/review">Periksa</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">Belum ada data. Mulai dengan membaca struk pertama.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

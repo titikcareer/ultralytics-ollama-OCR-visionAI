@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Masuk - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="auth-layout">
+  <section class="card auth-card">
+    <h1>Halo!</h1>
+    <p class="muted">Silakan sign in untuk melanjutkan.</p>
+    <form method="post" action="/login" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label for="username">Nama pengguna</label>
+      <input id="username" name="username" type="text" autocomplete="username" required maxlength="64" autofocus>
+      <label for="password">Kata sandi</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      {% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
+      <button type="submit" class="primary">Masuk</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Kelola Akun - {{ app_name }}{% endblock %}
+{% block content %}
+{% set role_labels = {'admin': 'Administrator', 'user': 'Karyawan'} %}
+{% set action_labels = {
+  'login': 'Masuk ke aplikasi',
+  'login_failed': 'Gagal masuk',
+  'logout': 'Keluar dari aplikasi',
+  'password_changed': 'Mengganti kata sandi',
+  'user_created': 'Membuat akun karyawan',
+  'user_status_changed': 'Mengubah keadaan akun',
+  'scan_created': 'Membaca dokumen',
+  'scan_duplicate': 'Dokumen pernah dibaca',
+  'scan_ocr_failed': 'Gagal membaca dokumen',
+  'scan_confirmed': 'Menyimpan hasil bacaan',
+  'scan_deleted': 'Menghapus hasil bacaan',
+  'feedback_saved': 'Menyimpan feedback pelatihan',
+  'feedback_failed': 'Gagal menyimpan feedback pelatihan',
+  'retrain_requested': 'Memulai latih ulang model',
+  'retrain_failed': 'Gagal melatih ulang model',
+  'export_created': 'Membuat laporan Excel',
+  'export_failed': 'Gagal membuat laporan',
+  'export_downloaded': 'Mengunduh laporan'
+} %}
+<section class="page-head">
+  <h1>Kelola Akun Karyawan</h1>
+  <p class="muted">Tambah akun karyawan, lihat daftar akun, dan lihat catatan aktivitas.</p>
+</section>
+
+<section class="card">
+  <h2>Tambah karyawan</h2>
+  <form id="userForm" class="form-grid">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="field"><label for="new_username">Nama pengguna</label><input id="new_username" name="username" required maxlength="64"></div>
+    <div class="field"><label for="new_full_name">Nama lengkap</label><input id="new_full_name" name="full_name" required maxlength="128"></div>
+    <div class="field"><label for="new_role">Hak akses</label><select id="new_role" name="role"><option value="user">Karyawan</option><option value="admin">Administrator</option></select></div>
+    <div class="field field-end"><button type="submit" class="secondary">Buat Akun</button></div>
+  </form>
+  <p class="notice notice-error" id="userError" role="alert" hidden></p>
+  <p class="notice" id="temporaryPassword" hidden></p>
+</section>
+
+<section class="card">
+  <h2>Model OCR &amp; Pembelajaran Berkelanjutan</h2>
+  <p class="muted">
+    Model aktif: <strong>{{ model_info.version or 'Belum tersedia' }}</strong>
+    {% if model_info.get('map50') is not none %} | mAP50: <strong>{{ '%.3f'|format(model_info.get('map50')) }}</strong>{% endif %}
+  </p>
+  <p class="muted">Feedback terverifikasi: <strong>{{ feedback_count }}</strong> struk. Latih ulang otomatis setiap {{ feedback_threshold }} feedback baru.</p>
+  <div class="actions">
+    <button type="button" class="secondary" id="retrainBtn">Latih Ulang Model Sekarang</button>
+  </div>
+  <p class="notice" id="retrainStatus" role="status" hidden></p>
+  <p class="notice notice-error" id="retrainError" role="alert" hidden></p>
+</section>
+
+<section class="card">
+  <h2>Daftar karyawan</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Nama Pengguna</th><th>Nama</th><th>Hak Akses</th><th>Keadaan</th><th></th></tr></thead>
+      <tbody>
+        {% for item in users %}
+        <tr>
+          <td>{{ item.username }}</td>
+          <td>{{ item.full_name }}</td>
+          <td>{{ role_labels.get(item.role, item.role) }}</td>
+          <td>{{ 'Aktif' if item.is_active else 'Nonaktif' }}</td>
+          <td>
+            <form method="post" action="/admin/users/{{ item.id }}/status" class="inline-form">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <button type="submit" class="text-button">{{ 'Nonaktifkan' if item.is_active else 'Aktifkan' }}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Catatan Aktivitas</h2>
+  <div class="table-wrap table-scroll">
+    <table>
+      <thead><tr><th>Waktu</th><th>Pengguna</th><th>Kegiatan</th><th>Dokumen</th></tr></thead>
+      <tbody>
+        {% for log in logs %}
+        <tr>
+          <td>{{ log.created_at.strftime('%d %b %Y, %H:%M') }}</td>
+          <td>{{ log.username or '-' }}</td>
+          <td>{{ action_labels.get(log.action, log.action) }}</td>
+          <td>{{ log.target or '-' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="empty">Belum ada aktivitas.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <div class="brand-watermark" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand-card" href="/scan" aria-label="Beranda aplikasi">
+        <img class="brand-logo" src="/brand/logo.png" alt="Logo PT. GS Battery Indonesia">
+      </a>
+
+      {% if user %}
+      <nav class="nav" aria-label="Navigasi utama">
+        <a href="/scan" {% if request.url.path.startswith('/scan') %}aria-current="page"{% endif %}>Pemindaian</a>
+        <a href="/history" {% if request.url.path.startswith('/history') %}aria-current="page"{% endif %}>Riwayat</a>
+        {% if user.role == 'admin' %}
+        <a href="/admin" {% if request.url.path.startswith('/admin') %}aria-current="page"{% endif %}>Kelola Akun</a>
+        {% endif %}
+      </nav>
+      {% endif %}
+
+      <div class="topbar-right">
+        <div class="clock-card" aria-label="Waktu dan tanggal">
+          <svg class="clock-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"></circle>
+            <path d="M12 7v5l3.5 2"></path>
+          </svg>
+          <span class="clock-copy">
+            <strong id="clockTime">--:--</strong>
+            <small id="clockDate">Menyiapkan tanggal...</small>
+          </span>
+        </div>
+
+        {% if user %}
+        <div class="account">
+          <span class="account-name">{{ user.full_name }}</span>
+          <form method="post" action="/logout" class="inline-form">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" class="text-button">Keluar</button>
+          </form>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    {% if user %}
+    <section class="status-strip" aria-label="Status sistem">
+      <span class="status-pill status-role">Role Aktif: <strong>{{ 'Administrator' if user.role == 'admin' else 'Karyawan' }}</strong></span>
+      <span class="status-pill is-good" id="serverStatus">Server: Terhubung</span>
+      <span class="status-pill is-good" id="ocrStatus">Layanan OCR: Aktif</span>
+    </section>
+    {% endif %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <span class="footer-copy">© 2026 PT GS Battery Indonesia. All rights reserved.</span>
+  </footer>
+
+  <script src="/static/js/app.js" defer></script>
+</body>
+</html>
